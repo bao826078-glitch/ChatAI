@@ -1,0 +1,8 @@
+{
+  "name": "ChatAI",
+  "description": "Ứng dụng web chat AI thông minh hỗ trợ kết nối API Key đa nhà cung cấp và tùy chỉnh mô hình linh hoạt.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

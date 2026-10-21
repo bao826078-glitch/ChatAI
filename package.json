@@ -1,0 +1,52 @@
+{
+  "name": "@bao826078/chatai",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Ứng dụng Chat AI sử dụng apikey",
+  "bin": {
+    "chatai": "./bin/cli.cjs"
+  },
+  "files": [
+    "dist",
+    "bin"
+  ],
+  "scripts": {
+    "dev": "tsx server.ts",
+    "build": "vite build",
+    "start": "node dist/server.js",
+    "preview": "vite preview",
+    "clean": "rimraf dist",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/genai": "^2.4.0",
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-react": "^6.1.1",
+    "dotenv": "^17.2.3",
+    "express": "^4.21.2",
+    "lucide-react": "^0.546.0",
+    "marked": "^18.1.1",
+    "motion": "^12.23.24",
+    "react": "^19.0.1",
+    "react-dom": "^19.0.1",
+    "recharts": "^3.10.1",
+    "sql.js": "^1.15.1",
+    "vite": "^8.3.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.14.0",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/sql.js": "^1.4.11",
+    "autoprefixer": "^10.4.21",
+    "esbuild": "^0.28.2",
+    "rimraf": "^6.0.1",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.21.0",
+    "typescript": "^7.0.2"
+  },
+  "overrides": {
+    "esbuild": "^0.28.2"
+  }
+}

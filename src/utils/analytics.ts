@@ -1,0 +1,260 @@
+import { Conversation, MonthlyStats, DailyTokenStat, MonthSummary } from '../types';
+import { estimateTokens } from './tokenEstimator';
+
+// Average estimated pricing: ~$0.25 per 1,000,000 tokens
+const USD_PER_TOKEN = 0.00000025;
+const USD_TO_VND_RATE = 25400;
+
+const ANALYTICS_STORAGE_KEY = 'chat_ai_analytics_logs';
+
+export interface StoredDailyRecord {
+  date: string; // YYYY-MM-DD
+  monthKey: string; // YYYY-MM
+  tokens: number;
+  conversations: string[];
+  messagesCount: number;
+}
+
+// Lấy toàn bộ dữ liệu lịch sử thống kê đã tự động lưu trong localStorage
+export function getStoredAnalyticsLogs(): Record<string, StoredDailyRecord> {
+  try {
+    const raw = localStorage.getItem(ANALYTICS_STORAGE_KEY);
+    if (raw) {
+      return JSON.parse(raw);
+    }
+  } catch (e) {
+    console.error('Lỗi khi đọc nhật ký thống kê:', e);
+  }
+  return {};
+}
+
+// Tự động lưu nhật ký thống kê vào localStorage (hoàn toàn tự động, KHÔNG cần nút bấm của người dùng)
+export function saveAnalyticsLogs(logs: Record<string, StoredDailyRecord>): void {
+  try {
+    localStorage.setItem(ANALYTICS_STORAGE_KEY, JSON.stringify(logs));
+  } catch (e) {
+    console.error('Lỗi khi tự động lưu nhật ký thống kê:', e);
+  }
+}
+
+// Tự động ghi nhận mức tiêu thụ token khi gửi tin nhắn hoặc sinh phản hồi
+export function recordTokenUsage(params: {
+  tokens: number;
+  conversationId: string;
+  timestamp?: number;
+}): void {
+  if (params.tokens <= 0) return;
+
+  const dateObj = new Date(params.timestamp || Date.now());
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+
+  const dateKey = `${year}-${month}-${day}`;
+  const monthKey = `${year}-${month}`;
+
+  const currentLogs = getStoredAnalyticsLogs();
+  const existing = currentLogs[dateKey] || {
+    date: dateKey,
+    monthKey,
+    tokens: 0,
+    conversations: [],
+    messagesCount: 0,
+  };
+
+  existing.tokens += params.tokens;
+  existing.messagesCount += 1;
+  if (!existing.conversations.includes(params.conversationId)) {
+    existing.conversations.push(params.conversationId);
+  }
+
+  currentLogs[dateKey] = existing;
+  saveAnalyticsLogs(currentLogs);
+}
+
+// Tự động đồng bộ toàn bộ lịch sử từ conversations vào hệ thống lưu trữ thống kê vĩnh viễn
+// Đảm bảo ngay cả khi người dùng xóa đoạn chat trong tương lai, số liệu thống kê các tháng vẫn được lưu nguyên vẹn
+export function syncConversationsWithHistory(conversations: Conversation[]): void {
+  const currentLogs = getStoredAnalyticsLogs();
+  let hasChanges = false;
+
+  conversations.forEach((conv) => {
+    conv.messages?.forEach((msg) => {
+      if (!msg.timestamp) return;
+      const tokens = msg.estimatedTokens || estimateTokens(msg.content);
+      if (tokens <= 0) return;
+
+      const d = new Date(msg.timestamp);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      const dateKey = `${year}-${month}-${day}`;
+      const monthKey = `${year}-${month}`;
+
+      if (!currentLogs[dateKey]) {
+        currentLogs[dateKey] = {
+          date: dateKey,
+          monthKey,
+          tokens,
+          conversations: [conv.id],
+          messagesCount: 1,
+        };
+        hasChanges = true;
+      }
+    });
+  });
+
+  if (hasChanges) {
+    saveAnalyticsLogs(currentLogs);
+  }
+}
+
+// Lấy danh sách N tháng gần nhất (mặc định 6 tháng gần nhất)
+export function getRecentMonthsList(count: number = 6): { key: string; label: string; isCurrent: boolean }[] {
+  const result: { key: string; label: string; isCurrent: boolean }[] = [];
+  const now = new Date();
+
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const key = `${year}-${month}`;
+    const label = `Tháng ${month}/${year}`;
+    result.push({
+      key,
+      label,
+      isCurrent: i === 0,
+    });
+  }
+
+  return result;
+}
+
+// Tính toán bảng thống kê chi tiết cho một tháng cụ thể (kết hợp dữ liệu đã lưu + đoạn chat hiện tại)
+export function calculateMonthlyStats(
+  conversations: Conversation[],
+  targetMonthKey?: string
+): MonthlyStats {
+  const now = new Date();
+  const activeMonthKey = targetMonthKey || `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const [yearStr, monthStr] = activeMonthKey.split('-');
+  const targetYear = parseInt(yearStr, 10);
+  const targetMonthIndex = parseInt(monthStr, 10) - 1;
+
+  // Lấy dữ liệu vĩnh viễn đã tự động lưu
+  const storedLogs = getStoredAnalyticsLogs();
+
+  // Xác định số ngày trong tháng được chọn
+  const daysInMonth = new Date(targetYear, targetMonthIndex + 1, 0).getDate();
+  const dailyMap = new Map<string, { tokens: number; conversations: Set<string>; messagesCount: number }>();
+
+  // Khởi tạo tất cả các ngày trong tháng
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dayKey = `${activeMonthKey}-${String(day).padStart(2, '0')}`;
+    dailyMap.set(dayKey, { tokens: 0, conversations: new Set(), messagesCount: 0 });
+  }
+
+  // Nạp dữ liệu từ kho lưu trữ tự động vĩnh viễn
+  Object.values(storedLogs).forEach((record) => {
+    if (record.monthKey === activeMonthKey && dailyMap.has(record.date)) {
+      const item = dailyMap.get(record.date)!;
+      item.tokens = Math.max(item.tokens, record.tokens);
+      item.messagesCount = Math.max(item.messagesCount, record.messagesCount);
+      record.conversations.forEach((cId) => item.conversations.add(cId));
+    }
+  });
+
+  // Hợp nhất thêm dữ liệu từ các đoạn chat đang mở
+  let totalTokensMonth = 0;
+  let totalMessagesMonth = 0;
+  const conversationsMonth = new Set<string>();
+
+  conversations.forEach((conv) => {
+    const convDate = new Date(conv.updatedAt || conv.createdAt);
+    if (convDate.getFullYear() === targetYear && convDate.getMonth() === targetMonthIndex) {
+      conversationsMonth.add(conv.id);
+    }
+
+    conv.messages?.forEach((msg) => {
+      const msgDate = new Date(msg.timestamp);
+      if (msgDate.getFullYear() === targetYear && msgDate.getMonth() === targetMonthIndex) {
+        const tokens = msg.estimatedTokens || estimateTokens(msg.content);
+        const dayKey = `${activeMonthKey}-${String(msgDate.getDate()).padStart(2, '0')}`;
+
+        totalTokensMonth += tokens;
+        totalMessagesMonth += 1;
+        conversationsMonth.add(conv.id);
+
+        if (dailyMap.has(dayKey)) {
+          const item = dailyMap.get(dayKey)!;
+          item.tokens = Math.max(item.tokens, tokens);
+          item.conversations.add(conv.id);
+          item.messagesCount += 1;
+        }
+      }
+    });
+  });
+
+  // Tổng hợp lại
+  const dailyData: DailyTokenStat[] = Array.from(dailyMap.entries()).map(([key, value]) => {
+    const parts = key.split('-');
+    const displayDate = `${parts[2]}/${parts[1]}`;
+    const costUsd = Number((value.tokens * USD_PER_TOKEN).toFixed(4));
+
+    return {
+      date: key,
+      displayDate,
+      tokens: value.tokens,
+      conversations: value.conversations.size,
+      messages: value.messagesCount,
+      costUsd,
+    };
+  });
+
+  // Tính tổng số liệu
+  const aggregatedTokens = Math.max(
+    totalTokensMonth,
+    dailyData.reduce((sum, d) => sum + d.tokens, 0)
+  );
+
+  const aggregatedMessages = Math.max(
+    totalMessagesMonth,
+    dailyData.reduce((sum, d) => sum + d.messages, 0)
+  );
+
+  const estimatedCostUsd = Number((aggregatedTokens * USD_PER_TOKEN).toFixed(4));
+  const estimatedCostVnd = Math.round(estimatedCostUsd * USD_TO_VND_RATE);
+
+  const monthLabel = `Tháng ${monthStr}/${yearStr}`;
+
+  return {
+    monthKey: activeMonthKey,
+    monthLabel,
+    totalTokens: aggregatedTokens,
+    totalConversations: Math.max(conversationsMonth.size, new Set(dailyData.filter(d => d.tokens > 0).map(d => d.date)).size),
+    totalMessages: aggregatedMessages,
+    estimatedCostUsd,
+    estimatedCostVnd,
+    dailyData,
+  };
+}
+
+// Bảng so sánh tổng hợp các tháng gần nhất
+export function calculateRecentMonthsSummary(
+  conversations: Conversation[],
+  count: number = 6
+): MonthSummary[] {
+  const months = getRecentMonthsList(count);
+  return months.map((m) => {
+    const stats = calculateMonthlyStats(conversations, m.key);
+    return {
+      monthKey: m.key,
+      monthLabel: m.label,
+      tokens: stats.totalTokens,
+      conversations: stats.totalConversations,
+      messages: stats.totalMessages,
+      costUsd: stats.estimatedCostUsd,
+      costVnd: stats.estimatedCostVnd,
+    };
+  });
+}
