@@ -80,15 +80,7 @@
 - **npm** / **bun** / **yarn** / **pnpm**.
 
 ### 1. Chạy trực tiếp bằng CLI (Không cần clone repo)
-```bash
-npx @bao826078/chatai
-```
-> Hoặc cài đặt toàn cục:
-```bash
-npm install -g @bao826078/chatai
-chatai --port 8088
-```
-
+Sẽ được phát triển trong tương lai !!!
 ---
 
 ### 2. Phát triển từ mã nguồn (Development)
