@@ -1,6 +1,6 @@
 ﻿<div align="center">
 
-# 🤖 ChatAI - Modern Multi-Provider AI Assistant
+#  ChatAI - Modern Multi-Provider AI Assistant
 
 <p align="center">
   <strong>Ứng dụng Chat AI đa nhà cung cấp, tốc độ cao, giao diện tinh tế & bảo mật tuyệt đối</strong>
