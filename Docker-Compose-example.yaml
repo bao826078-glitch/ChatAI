@@ -1,0 +1,12 @@
+services:
+  chatai:
+    image: bao826078/chatai:latest
+    container_name: chatai
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+    # Add persistent storage here if required by your application.
+    # volumes:
+    #   - ./data:/app/data
