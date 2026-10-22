@@ -78,16 +78,7 @@ The application features dual-layer persistence (localStorage via the browser an
 - **Package Managers**: npm, yarn, pnpm, or bun.
 
 ### 1. Run Instantly without Cloning (npx Global Package)
-If you only need to launch ChatAI now, you can run it directly via npx:
-```bash
-npx @bao826078/chatai
-```
-
-An alternative global installation:
-```bash
-npm install -g @bao826078/chatai
-chatai --port 8088
-```
+Will be developed in the future !!!
 
 ---
 
