@@ -21,38 +21,43 @@ import {
   CartesianGrid, 
   Legend 
 } from 'recharts';
-import { Conversation } from '../types';
+import { Conversation, AppLanguage } from '../types';
 import { 
   calculateMonthlyStats, 
   getRecentMonthsList, 
-  calculateRecentMonthsSummary 
+  calculateRecentMonthsSummary,
+  formatMonthLabel 
 } from '../utils/analytics';
 import { formatTokenCount } from '../utils/tokenEstimator';
+import { translations } from '../utils/i18n';
 
 interface AnalyticsModalProps {
   isOpen: boolean;
   onClose: () => void;
   conversations: Conversation[];
+  language?: AppLanguage;
 }
 
 export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   isOpen,
   onClose,
   conversations,
+  language = 'en',
 }) => {
-  const recentMonths = useMemo(() => getRecentMonthsList(6), []);
+  const t = translations[language] || translations.en;
+  const recentMonths = useMemo(() => getRecentMonthsList(6, language), [language]);
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>(recentMonths[0]?.key || '');
   const [viewMode, setViewMode] = useState<'single' | 'compare'>('single');
   const [activeMetric, setActiveMetric] = useState<'tokens' | 'conversations' | 'both'>('tokens');
 
   // Fallback stats computed from current sessions
   const fallbackStats = useMemo(() => {
-    return calculateMonthlyStats(conversations, selectedMonthKey);
-  }, [conversations, selectedMonthKey]);
+    return calculateMonthlyStats(conversations, selectedMonthKey, language);
+  }, [conversations, selectedMonthKey, language]);
 
   const fallbackSummary = useMemo(() => {
-    return calculateRecentMonthsSummary(conversations, 6);
-  }, [conversations]);
+    return calculateRecentMonthsSummary(conversations, 6, language);
+  }, [conversations, language]);
 
   const [dbStats, setDbStats] = useState<any>(null);
   const [dbSummary, setDbSummary] = useState<any[] | null>(null);
@@ -77,10 +82,12 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
 
   // Merge stats: prioritize SQLite persisted records if available
   const stats = useMemo(() => {
+    const formattedMonth = formatMonthLabel(selectedMonthKey, language);
     if (dbStats && dbStats.totalTokens > 0) {
       return {
         ...fallbackStats,
         ...dbStats,
+        monthLabel: formattedMonth,
         totalTokens: Math.max(dbStats.totalTokens, fallbackStats.totalTokens),
         totalMessages: Math.max(dbStats.totalMessages, fallbackStats.totalMessages),
         totalConversations: Math.max(dbStats.totalConversations, fallbackStats.totalConversations),
@@ -88,30 +95,37 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
         estimatedCostVnd: Math.round(Number((Math.max(dbStats.totalTokens, fallbackStats.totalTokens) * 0.00000025).toFixed(4)) * 25400),
       };
     }
-    return fallbackStats;
-  }, [dbStats, fallbackStats]);
+    return {
+      ...fallbackStats,
+      monthLabel: formattedMonth,
+    };
+  }, [dbStats, fallbackStats, selectedMonthKey, language]);
 
   const multiMonthSummary = useMemo(() => {
-    if (dbSummary && dbSummary.length > 0 && dbSummary.some((s) => s.tokens > 0)) {
-      return dbSummary;
-    }
-    return fallbackSummary;
-  }, [dbSummary, fallbackSummary]);
+    const raw = (dbSummary && dbSummary.length > 0 && dbSummary.some((s) => s.tokens > 0))
+      ? dbSummary
+      : fallbackSummary;
+
+    return raw.map((item: any) => ({
+      ...item,
+      monthLabel: formatMonthLabel(item.monthKey || item.monthLabel, language),
+    }));
+  }, [dbSummary, fallbackSummary, language]);
 
   if (!isOpen) return null;
 
-  // Custom Recharts Tooltip cho tháng đơn lẻ
-  const CustomDailyTooltip = ({ active, payload, label }: any) => {
+  // Custom Recharts tooltip for single-month view
+  const CustomDailyTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
         <div className="p-3 rounded-xl bg-white border border-neutral-300 shadow-xl text-xs space-y-1.5 font-sans">
           <p className="font-bold text-sm text-neutral-900 border-b border-neutral-200 pb-1.5">
-            Ngày: {data.displayDate} ({data.date})
+            {language === 'vi' ? 'Ngày' : 'Date'}: {data.displayDate} ({data.date})
           </p>
           <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
             <span className="flex items-center gap-1.5">
-              <Coins className="w-3.5 h-3.5 text-neutral-600" /> Token tiêu thụ:
+              <Coins className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Token tiêu thụ:' : 'Tokens consumed:'}
             </span>
             <span className="font-mono font-bold text-neutral-900">
               {data.tokens.toLocaleString()}
@@ -119,7 +133,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
           </div>
           <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
             <span className="flex items-center gap-1.5">
-              <MessageSquare className="w-3.5 h-3.5 text-neutral-600" /> Tin nhắn / Lượt:
+              <MessageSquare className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Tin nhắn / Lượt:' : 'Interactions:'}
             </span>
             <span className="font-mono font-bold text-neutral-900">
               {data.messages || data.conversations}
@@ -127,7 +141,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
           </div>
           <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
             <span className="flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-neutral-600" /> Ước tính chi phí:
+              <DollarSign className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Ước tính chi phí:' : 'Estimated cost:'}
             </span>
             <span className="font-mono font-bold text-neutral-900">
               ${data.costUsd}
@@ -139,18 +153,18 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
     return null;
   };
 
-  // Custom Recharts Tooltip cho so sánh các tháng
+  // Custom Recharts tooltip for multi-month comparison
   const CustomMultiMonthTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
         <div className="p-3 rounded-xl bg-white border border-neutral-300 shadow-xl text-xs space-y-1.5 font-sans">
           <p className="font-bold text-sm text-neutral-900 border-b border-neutral-200 pb-1.5">
-            {data.monthLabel}
+            {formatMonthLabel(data.monthKey || data.monthLabel, language)}
           </p>
           <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
             <span className="flex items-center gap-1.5">
-              <Coins className="w-3.5 h-3.5 text-neutral-600" /> Tổng Token:
+              <Coins className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Tổng Token:' : 'Total Tokens:'}
             </span>
             <span className="font-mono font-bold text-neutral-900">
               {data.tokens.toLocaleString()}
@@ -158,7 +172,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
           </div>
           <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
             <span className="flex items-center gap-1.5">
-              <MessageSquare className="w-3.5 h-3.5 text-neutral-600" /> Tin nhắn:
+              <MessageSquare className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Tin nhắn:' : 'Messages:'}
             </span>
             <span className="font-mono font-bold text-neutral-900">
               {data.messages}
@@ -166,7 +180,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
           </div>
           <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
             <span className="flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-neutral-600" /> Chi phí ước tính:
+              <DollarSign className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Chi phí ước tính:' : 'Estimated cost:'}
             </span>
             <span className="font-mono font-bold text-neutral-900">
               ${data.costUsd} ({data.costVnd.toLocaleString('vi-VN')} đ)
@@ -183,7 +197,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   const tokenBarColor = '#171717';
   const convBarColor = '#737373';
 
-  // Lọc danh sách ngày có dữ liệu hoặc toàn bộ ngày
+  // Filter daily records for charting
   const chartData = stats.dailyData;
 
   return (
@@ -201,22 +215,22 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h3 className="font-bold text-base sm:text-lg text-neutral-900">
-                  Bảng Thống Kê Tài Nguyên & Chi Phí
+                  {t.analyticsModalTitle}
                 </h3>
                 <span className="inline-flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
                   <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  Tự động lưu dữ liệu
+                  {t.analyticsAutoSaved}
                 </span>
               </div>
               <p className="text-xs text-neutral-500 font-medium mt-0.5">
-                Theo dõi mức tiêu thụ token, số lượt trao đổi và chi phí theo các tháng gần nhất
+                {t.analyticsSubtitle}
               </p>
             </div>
           </div>
           <button
             onClick={onClose}
             className="p-2 rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
-            title="Đóng bảng thống kê"
+            title={t.closeBtn}
           >
             <X className="w-5 h-5" />
           </button>
@@ -224,7 +238,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-5 sm:p-6 space-y-5 overflow-y-auto">
-          {/* Controls Bar: Chọn Tháng & Chế độ xem */}
+          {/* Controls Bar: Month Selector & View Mode */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-xl bg-neutral-50 border border-neutral-200">
             {/* View Mode Toggle */}
             <div className="flex items-center gap-1.5 p-1 rounded-lg bg-neutral-200/80 w-fit">
@@ -238,7 +252,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 }`}
               >
                 <Calendar className="w-3.5 h-3.5" />
-                <span>Chi tiết từng tháng</span>
+                <span>{t.tabSingleMonth}</span>
               </button>
               <button
                 type="button"
@@ -250,7 +264,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 }`}
               >
                 <Layers className="w-3.5 h-3.5" />
-                <span>So sánh 6 tháng gần nhất</span>
+                <span>{t.tabCompare}</span>
               </button>
             </div>
 
@@ -258,7 +272,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             {viewMode === 'single' && (
               <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
                 <span className="text-xs text-neutral-500 font-semibold shrink-0 mr-1">
-                  Chọn tháng:
+                  {t.selectMonthLabel}
                 </span>
                 {recentMonths.map((m) => {
                   const isSelected = m.key === selectedMonthKey;
@@ -273,7 +287,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                           : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-100 hover:border-neutral-300'
                       }`}
                     >
-                      {m.label} {m.isCurrent ? '(Hiện tại)' : ''}
+                      {m.label} {m.isCurrent ? t.currentMonthTag : ''}
                     </button>
                   );
                 })}
@@ -281,7 +295,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             )}
           </div>
 
-          {/* VIEW MODE 1: Chi tiết từng tháng */}
+          {/* VIEW MODE 1: Single Month Detailed Breakdown */}
           {viewMode === 'single' && (
             <>
               {/* Stat Cards Grid */}
@@ -289,35 +303,35 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 {/* Stat 1: Total Tokens */}
                 <div className="p-4 rounded-xl border border-neutral-200 bg-neutral-50 flex flex-col justify-between shadow-xs">
                   <div className="flex items-center justify-between text-neutral-500 text-xs font-semibold mb-1">
-                    <span>Tổng Token {stats.monthLabel}</span>
+                    <span>{t.totalTokensCard} ({stats.monthLabel})</span>
                     <Coins className="w-4 h-4 text-neutral-700" />
                   </div>
                   <div className="text-xl sm:text-2xl font-bold font-mono text-neutral-900">
                     {stats.totalTokens.toLocaleString()}
                   </div>
                   <span className="text-xs text-neutral-500 font-medium mt-1">
-                    ~{formatTokenCount(stats.totalTokens)} tokens đã ghi nhận
+                    ~{formatTokenCount(stats.totalTokens)} {t.tokensCount}
                   </span>
                 </div>
 
                 {/* Stat 2: Conversations & Messages */}
                 <div className="p-4 rounded-xl border border-neutral-200 bg-neutral-50 flex flex-col justify-between shadow-xs">
                   <div className="flex items-center justify-between text-neutral-500 text-xs font-semibold mb-1">
-                    <span>Số Lượt Tương Tác</span>
+                    <span>{t.interactionsCard}</span>
                     <MessageSquare className="w-4 h-4 text-neutral-700" />
                   </div>
                   <div className="text-xl sm:text-2xl font-bold font-mono text-neutral-900">
                     {stats.totalMessages || stats.totalConversations}
                   </div>
                   <span className="text-xs text-neutral-500 font-medium mt-1">
-                    {stats.totalConversations} cuộc hội thoại lưu trữ
+                    {stats.totalConversations} {language === 'vi' ? 'cuộc hội thoại' : 'conversations'}
                   </span>
                 </div>
 
                 {/* Stat 3: Estimated Cost */}
                 <div className="col-span-2 sm:col-span-1 p-4 rounded-xl border border-neutral-200 bg-neutral-50 flex flex-col justify-between shadow-xs">
                   <div className="flex items-center justify-between text-neutral-500 text-xs font-semibold mb-1">
-                    <span>Ước Tính Chi Phí</span>
+                    <span>{t.costCard}</span>
                     <DollarSign className="w-4 h-4 text-neutral-700" />
                   </div>
                   <div className="text-xl sm:text-2xl font-bold font-mono text-neutral-900">
@@ -332,12 +346,12 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
               {/* Token Source & Breakdown Info */}
               <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-neutral-100 border border-neutral-200 text-xs">
                 <div className="flex items-center gap-3 flex-wrap">
-                  <span className="text-neutral-500 font-semibold">Phân tích token:</span>
+                  <span className="text-neutral-500 font-semibold">{t.tokenAnalysisTitle}</span>
                   <span className="font-mono text-neutral-800">
-                    Đầu vào (Input): <strong>{(stats.totalInputTokens || 0).toLocaleString()}</strong>
+                    {t.tokenInput}: <strong>{(stats.totalInputTokens || 0).toLocaleString()}</strong>
                   </span>
                   <span className="font-mono text-neutral-800">
-                    Đầu ra (Output): <strong>{(stats.totalOutputTokens || 0).toLocaleString()}</strong>
+                    {t.tokenOutput}: <strong>{(stats.totalOutputTokens || 0).toLocaleString()}</strong>
                   </span>
                 </div>
                 <div className="flex items-center gap-1.5 flex-wrap">
@@ -351,7 +365,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                   )}
                   {stats.bySource?.estimated > 0 && (
                     <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 font-medium text-[11px]">
-                      Ước tính: {stats.bySource.estimated.toLocaleString()}
+                      {language === 'vi' ? 'Ước tính' : 'Estimated'}: {stats.bySource.estimated.toLocaleString()}
                     </span>
                   )}
                 </div>
@@ -360,10 +374,10 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
               {/* Provider Breakdown */}
               {stats.byProvider && Object.keys(stats.byProvider).length > 0 && (
                 <div className="flex items-center gap-2 flex-wrap text-xs">
-                  <span className="text-neutral-500 font-semibold">Theo nhà cung cấp:</span>
+                  <span className="text-neutral-500 font-semibold">{t.byProviderTitle}</span>
                   {Object.entries(stats.byProvider).map(([pName, pData]: any) => (
                     <span key={pName} className="px-2.5 py-1 rounded-lg bg-neutral-50 border border-neutral-200 font-medium text-neutral-800 shadow-2xs">
-                      <strong className="uppercase">{pName}</strong>: {pData.tokens.toLocaleString()} tokens ({pData.requests} reqs)
+                      <strong className="uppercase">{pName}</strong>: {pData.tokens.toLocaleString()} {t.tokensCount} ({pData.requests} reqs)
                     </span>
                   ))}
                 </div>
@@ -374,7 +388,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
                   <div className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-neutral-900">
                     <TrendingUp className="w-4 h-4 text-neutral-700" />
-                    <span>Biểu đồ tiêu thụ theo từng ngày trong {stats.monthLabel}</span>
+                    <span>{t.tokensChartTitle} {stats.monthLabel}</span>
                   </div>
 
                   {/* Metric Filter Tabs */}
@@ -388,7 +402,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                           : 'text-neutral-600 hover:text-neutral-900'
                       }`}
                     >
-                      Token
+                      {t.metricTokens}
                     </button>
                     <button
                       type="button"
@@ -399,7 +413,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                           : 'text-neutral-600 hover:text-neutral-900'
                       }`}
                     >
-                      Tương tác
+                      {t.metricConversations}
                     </button>
                     <button
                       type="button"
@@ -410,7 +424,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                           : 'text-neutral-600 hover:text-neutral-900'
                       }`}
                     >
-                      Cả hai
+                      {t.metricBoth}
                     </button>
                   </div>
                 </div>
@@ -437,7 +451,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                       <Tooltip content={<CustomDailyTooltip />} />
                       <Legend 
                         wrapperStyle={{ fontSize: '11px', paddingTop: '8px', fontWeight: 600 }}
-                        formatter={(value) => (value === 'tokens' ? 'Token tiêu thụ' : 'Số lượt tương tác')}
+                        formatter={(value) => (value === 'tokens' ? (language === 'vi' ? 'Token tiêu thụ' : 'Tokens consumed') : (language === 'vi' ? 'Số lượt tương tác' : 'Interactions'))}
                       />
                       
                       {(activeMetric === 'tokens' || activeMetric === 'both') && (
@@ -466,14 +480,14 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
             </>
           )}
 
-          {/* VIEW MODE 2: So sánh 6 tháng gần nhất */}
+          {/* VIEW MODE 2: Multi-Month Comparison (Last 6 Months) */}
           {viewMode === 'compare' && (
             <div className="space-y-5">
               {/* Comparative Multi-Month Chart */}
               <div className="space-y-2">
                 <div className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-neutral-900">
                   <TrendingUp className="w-4 h-4 text-neutral-700" />
-                  <span>Biểu đồ so sánh lượng Token tiêu thụ qua các tháng</span>
+                  <span>{t.multiMonthChartTitle}</span>
                 </div>
 
                 <div className="w-full h-64 sm:h-72 min-h-[250px] p-3 rounded-xl border border-neutral-200 bg-neutral-50/50 shadow-inner">
@@ -497,7 +511,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                       <Tooltip content={<CustomMultiMonthTooltip />} />
                       <Bar 
                         dataKey="tokens" 
-                        name="Token tiêu thụ"
+                        name={language === 'vi' ? 'Token tiêu thụ' : 'Tokens consumed'}
                         fill={tokenBarColor} 
                         radius={[4, 4, 0, 0]} 
                         maxBarSize={48}
@@ -510,18 +524,18 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
               {/* Multi-Month Breakdown Table */}
               <div className="space-y-2">
                 <h4 className="text-xs font-bold text-neutral-800">
-                  Bảng tổng hợp chi tiết các tháng gần nhất
+                  {t.multiMonthTableTitle}
                 </h4>
                 <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-xs">
                   <table className="w-full text-xs text-left">
                     <thead className="bg-neutral-100 text-neutral-700 font-semibold border-b border-neutral-200">
                       <tr>
-                        <th className="px-3.5 py-2.5">Tháng</th>
-                        <th className="px-3.5 py-2.5 text-right">Tổng Token</th>
-                        <th className="px-3.5 py-2.5 text-right">Hội thoại / Tin nhắn</th>
-                        <th className="px-3.5 py-2.5 text-right">Chi phí (USD)</th>
-                        <th className="px-3.5 py-2.5 text-right">Chi phí (VNĐ)</th>
-                        <th className="px-3.5 py-2.5 text-center">Thao tác</th>
+                        <th className="px-3.5 py-2.5">{t.colMonth}</th>
+                        <th className="px-3.5 py-2.5 text-right">{t.colTokens}</th>
+                        <th className="px-3.5 py-2.5 text-right">{t.colInteractions}</th>
+                        <th className="px-3.5 py-2.5 text-right">{t.colCostUsd}</th>
+                        <th className="px-3.5 py-2.5 text-right">{t.colCostVnd}</th>
+                        <th className="px-3.5 py-2.5 text-center">{t.colAction}</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-neutral-200">
@@ -535,7 +549,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                             {row.monthLabel}
                             {row.monthKey === recentMonths[0]?.key && (
                               <span className="text-[10px] px-1.5 py-0.2 rounded bg-neutral-200 text-neutral-700 font-normal">
-                                Hiện tại
+                                {t.currentMonthTag}
                               </span>
                             )}
                           </td>
@@ -560,7 +574,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
                               }}
                               className="px-2 py-1 rounded text-[11px] font-medium text-neutral-800 hover:bg-neutral-200 transition-colors underline cursor-pointer"
                             >
-                              Xem ngày
+                              {t.actionViewDay}
                             </button>
                           </td>
                         </tr>
@@ -576,7 +590,7 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
           <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-neutral-100 border border-neutral-200 text-xs text-neutral-600 font-medium">
             <Info className="w-4 h-4 shrink-0 mt-0.5 text-neutral-500" />
             <div className="leading-relaxed">
-              <strong className="text-neutral-900">Cơ chế tự động lưu & định mức:</strong> Toàn bộ dữ liệu tiêu thụ token theo ngày và các tháng được hệ sinh thái tự động ghi nhớ và bảo lưu an toàn trên trình duyệt của bạn (không cần thao tác lưu thủ công). Chi phí ước tính quy đổi theo chuẩn ~$0.25 cho mỗi 1.000.000 tokens.
+              <strong className="text-neutral-900">{language === 'vi' ? 'Cơ chế lưu trữ SQLite & định mức:' : 'SQLite Persistence & Rates:'}</strong> {language === 'vi' ? 'Toàn bộ dữ liệu token theo ngày và tháng được lưu trữ bền vững trong cơ sở dữ liệu SQLite data/chatai.db. Chi phí ước tính chuẩn ~$0.25 cho mỗi 1.000.000 tokens.' : 'All token usage metrics by day and month are securely stored in the SQLite database at data/chatai.db. Estimated cost standard is ~$0.25 per 1,000,000 tokens.'}
             </div>
           </div>
         </div>
@@ -584,14 +598,14 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
         {/* Modal Footer */}
         <div className="flex items-center justify-between px-6 py-4 border-t border-neutral-200 bg-neutral-50 shrink-0">
           <span className="text-xs text-neutral-500">
-            Dữ liệu được cập nhật tức thời theo các cuộc trò chuyện
+            {language === 'vi' ? 'Dữ liệu được cập nhật tức thời theo các cuộc trò chuyện' : 'Real-time metrics synced with chat conversations'}
           </span>
           <button
             type="button"
             onClick={onClose}
             className="px-5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs sm:text-sm font-bold transition-colors cursor-pointer shadow-xs"
           >
-            Đóng
+            {t.closeBtn}
           </button>
         </div>
       </div>

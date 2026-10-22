@@ -12,7 +12,7 @@ import {
   Clock,
   Coins
 } from 'lucide-react';
-import { Message } from '../types';
+import { Message, AppLanguage } from '../types';
 import { MarkdownView } from './MarkdownView';
 import { estimateTokens, formatTokenCount } from '../utils/tokenEstimator';
 
@@ -22,6 +22,7 @@ interface ChatMessageProps {
   onRegenerate?: () => void;
   onRetry?: () => void;
   onOpenApiKeyModal?: () => void;
+  language?: AppLanguage;
 }
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
@@ -29,6 +30,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   onRegenerate,
   onRetry,
   onOpenApiKeyModal,
+  language = 'en',
 }) => {
   const isAI = message.sender === 'ai' || message.role === 'model';
   const [copied, setCopied] = useState(false);
@@ -52,7 +54,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     }
 
     const utterance = new SpeechSynthesisUtterance(message.content);
-    utterance.lang = 'vi-VN';
+    utterance.lang = language === 'vi' ? 'vi-VN' : 'en-US';
     utterance.onend = () => setIsSpeaking(false);
     utterance.onerror = () => setIsSpeaking(false);
 
@@ -100,7 +102,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
           <div className="flex items-center justify-between text-xs text-neutral-500">
             <div className="flex items-center gap-1.5">
               <span className="font-semibold text-neutral-900">
-                {isAI ? 'Trợ lý AI' : 'Bạn'}
+                {isAI ? (language === 'vi' ? 'Trợ lý AI' : 'AI Assistant') : (language === 'vi' ? 'Bạn' : 'You')}
               </span>
               {message.modelUsed && (
                 <span className="text-[10px] px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-600 font-mono">
@@ -110,7 +112,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               {tokenCount > 0 && (
                 <span 
                   className="text-[10px] px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-500 font-mono flex items-center gap-0.5"
-                  title="Số lượng token ước tính tiêu thụ"
+                  title={language === 'vi' ? 'Số lượng token ước tính tiêu thụ' : 'Estimated token count'}
                 >
                   <Coins className="w-2.5 h-2.5 text-neutral-400" />
                   ~{formatTokenCount(tokenCount)} tokens
@@ -132,7 +134,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               <div className="flex items-start gap-2">
                 <AlertTriangle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
                 <div className="space-y-0.5">
-                  <span className="font-semibold block">Thông báo lỗi kết nối</span>
+                  <span className="font-semibold block">{language === 'vi' ? 'Thông báo lỗi kết nối' : 'Connection Error'}</span>
                   <p className="leading-relaxed text-neutral-700">
                     {message.content}
                   </p>
@@ -146,7 +148,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium text-xs transition-colors cursor-pointer"
                   >
                     <Key className="w-3 h-3" />
-                    <span>Mở cài đặt để cập nhật API Key</span>
+                    <span>{language === 'vi' ? 'Mở cài đặt để cập nhật API Key' : 'Open settings to update API Key'}</span>
                   </button>
                 </div>
               )}
@@ -163,7 +165,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               <button
                 onClick={handleCopy}
                 className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
-                title="Sao chép nội dung"
+                title={copied ? (language === 'vi' ? 'Đã sao chép!' : 'Copied!') : (language === 'vi' ? 'Sao chép nội dung' : 'Copy message')}
               >
                 {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
@@ -171,7 +173,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
               <button
                 onClick={toggleSpeech}
                 className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
-                title={isSpeaking ? 'Dừng đọc văn bản' : 'Đọc phản hồi bằng giọng nói'}
+                title={isSpeaking ? (language === 'vi' ? 'Dừng đọc văn bản' : 'Stop speaking') : (language === 'vi' ? 'Đọc phản hồi bằng giọng nói' : 'Read aloud')}
               >
                 {isSpeaking ? <VolumeX className="w-3.5 h-3.5 text-blue-600" /> : <Volume2 className="w-3.5 h-3.5" />}
               </button>
@@ -180,7 +182,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
                 <button
                   onClick={handleRetryAction}
                   className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
-                  title="Thử tạo lại câu trả lời"
+                  title={language === 'vi' ? 'Thử tạo lại câu trả lời' : 'Regenerate response'}
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                 </button>

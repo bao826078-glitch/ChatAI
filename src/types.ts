@@ -1,11 +1,12 @@
 export type ApiProvider = 'openai' | 'google' | 'claude' | '9router' | 'other';
+export type AppLanguage = 'en' | 'vi';
 
 export interface Message {
   id: string;
-  sender: 'user' | 'ai'; // Người gửi: Người dùng hoặc AI
-  role: 'user' | 'model'; // tương thích API backend
+  sender: 'user' | 'ai'; // Message sender: User or AI
+  role: 'user' | 'model'; // Backend API compatibility
   content: string;
-  timestamp: number; // Thời gian gửi tin nhắn (ms)
+  timestamp: number; // Message timestamp (ms)
   modelUsed?: string;
   isStreaming?: boolean;
   error?: boolean;
@@ -51,7 +52,7 @@ export interface DailyTokenStat {
 
 export interface MonthlyStats {
   monthKey: string; // YYYY-MM
-  monthLabel: string; // e.g. "Tháng 10/2026"
+  monthLabel: string; // e.g. "October 2026" or "Tháng 10/2026"
   totalTokens: number;
   totalConversations: number;
   totalMessages: number;

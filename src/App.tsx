@@ -17,7 +17,7 @@ import {
   BarChart3,
   Sparkles
 } from 'lucide-react';
-import { Conversation, Message, ModelOption, ApiProvider } from './types';
+import { Conversation, Message, ModelOption, ApiProvider, AppLanguage } from './types';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './components/ChatMessage';
@@ -27,33 +27,8 @@ import { AnalyticsModal } from './components/AnalyticsModal';
 import { HelpModal } from './components/HelpModal';
 import { estimateTokens, formatTokenCount } from './utils/tokenEstimator';
 import { syncConversationsWithHistory, recordTokenUsage } from './utils/analytics';
+import { getStoredLanguage, saveStoredLanguage, translations } from './utils/i18n';
 
-const STARTER_PROMPTS = [
-  {
-    icon: Code,
-    title: 'Lập trình & Thuật toán',
-    desc: 'Viết mã QuickSort bằng TypeScript kèm giải thích độ phức tạp',
-    prompt: 'Hãy viết thuật toán QuickSort (sắp xếp nhanh) bằng TypeScript, kèm theo giải thích chi tiết về độ phức tạp thời gian O(n log n) và ví dụ chạy thử.',
-  },
-  {
-    icon: FileText,
-    title: 'Viết email chuyên nghiệp',
-    desc: 'Soạn email xin nghỉ phép hoặc đề xuất dự án mới',
-    prompt: 'Hãy giúp tôi soạn thảo một email xin nghỉ phép 2 ngày gửi cho quản lý bằng văn phong trang trọng, lịch sự và chuyên nghiệp.',
-  },
-  {
-    icon: Languages,
-    title: 'Dịch thuật chuyên sâu',
-    desc: 'Dịch và trau chuốt bài viết kỹ thuật sang tiếng Việt',
-    prompt: 'Hãy giải thích và dịch thuật ngữ "Server-Sent Events" và "WebSockets" sang tiếng Việt, so sánh ưu nhược điểm và tình huống sử dụng của từng loại.',
-  },
-  {
-    icon: Bug,
-    title: 'Debug & Tối ưu hóa',
-    desc: 'Tìm lỗi tiềm ẩn và cải thiện hiệu năng mã nguồn',
-    prompt: 'Làm thế nào để tránh tình trạng memory leak trong ứng dụng React useEffect? Nêu các ví dụ cụ thể và cách xử lý cleanup đúng cách.',
-  },
-];
 
 export default function App() {
   // Ensure pure light mode
@@ -75,7 +50,7 @@ export default function App() {
     return 'openai';
   });
 
-  // Base URL for API calls - để trống theo yêu cầu người dùng
+  // Base URL for API calls - empty by default per user request
   const [baseUrl, setBaseUrl] = useState<string>(() => {
     return localStorage.getItem('ai_base_url') || '';
   });
@@ -89,10 +64,11 @@ export default function App() {
       console.error(e);
     }
     const initialId = 'chat-' + Date.now();
+    const initTitle = getStoredLanguage() === 'vi' ? 'Đoạn chat mới' : 'New chat';
     return [
       {
         id: initialId,
-        title: 'Đoạn chat mới',
+        title: initTitle,
         createdAt: Date.now(),
         updatedAt: Date.now(),
         messages: [],
@@ -113,8 +89,8 @@ export default function App() {
   const [isKeyInvalid, setIsKeyInvalid] = useState<boolean>(false);
   const [invalidKeyErrorMsg, setInvalidKeyErrorMsg] = useState<string>('');
 
-  // Ban đầu danh sách mô hình hoàn toàn TRỐNG TRƠN theo yêu cầu:
-  // Chỉ khi gọi/nhập API Key vào thành công thì mới nhận các model AI từ server
+  // The model list is initially empty per user request:
+  // Models are dynamically retrieved only after a valid API Key is provided
   const [models, setModels] = useState<ModelOption[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState<boolean>(false);
   const [selectedModel, setSelectedModel] = useState<string>('');
@@ -134,6 +110,42 @@ export default function App() {
   const [isAnalyticsModalOpen, setIsAnalyticsModalOpen] = useState(false);
   const [isHelpModalOpen, setIsHelpModalOpen] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+
+  // App Language: 'en' (default) | 'vi'
+  const [language, setLanguage] = useState<AppLanguage>(getStoredLanguage);
+  const t = translations[language] || translations.en;
+
+  const handleLanguageChange = (newLang: AppLanguage) => {
+    setLanguage(newLang);
+    saveStoredLanguage(newLang);
+  };
+
+  const starterPrompts = useMemo(() => [
+    {
+      icon: Code,
+      title: t.starterCodingTitle,
+      desc: t.starterCodingDesc,
+      prompt: t.starterCodingPrompt,
+    },
+    {
+      icon: FileText,
+      title: t.starterEmailTitle,
+      desc: t.starterEmailDesc,
+      prompt: t.starterEmailPrompt,
+    },
+    {
+      icon: Languages,
+      title: t.starterTranslationTitle,
+      desc: t.starterTranslationDesc,
+      prompt: t.starterTranslationPrompt,
+    },
+    {
+      icon: Bug,
+      title: t.starterDebugTitle,
+      desc: t.starterDebugDesc,
+      prompt: t.starterDebugPrompt,
+    },
+  ], [t]);
 
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -232,13 +244,13 @@ export default function App() {
     loadConversationsFromBackend();
   }, []);
 
-  // Tự động đồng bộ toàn bộ lịch sử sử dụng vào kho lưu trữ thống kê vĩnh viễn (auto-save)
+  // Automatically synchronize entire chat history into permanent analytics logs (auto-save)
   useEffect(() => {
     syncConversationsWithHistory(conversations);
   }, [conversations]);
 
   // Function to dynamically fetch models provided by the active key
-  // Khi không có API key thì danh sách mô hình lập tức trống trơn
+  // When no API key is provided, the model list immediately resets to empty
   const fetchModelsFromApi = async (activeProvider = provider, activeKey = apiKey, activeBase = baseUrl) => {
     const trimmedKey = (activeKey || '').trim();
     if (!trimmedKey) {
@@ -376,10 +388,11 @@ export default function App() {
 
   // Create new chat
   const handleNewChat = () => {
+    const newChatTitle = language === 'vi' ? 'Đoạn chat mới' : 'New chat';
     const newChatId = 'chat-' + Date.now();
     const newChat: Conversation = {
       id: newChatId,
-      title: 'Đoạn chat mới',
+      title: newChatTitle,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       messages: [],
@@ -396,7 +409,7 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id: newChatId,
-        title: 'Đoạn chat mới',
+        title: newChatTitle,
         model: selectedModel,
         provider,
         system_instruction: systemInstruction,
@@ -438,10 +451,11 @@ export default function App() {
       fetch(`/api/conversations/${c.id}`, { method: 'DELETE' }).catch(console.error);
     });
 
+    const newChatTitle = language === 'vi' ? 'Đoạn chat mới' : 'New chat';
     const initialId = 'chat-' + Date.now();
     const emptyChat: Conversation = {
       id: initialId,
-      title: 'Đoạn chat mới',
+      title: newChatTitle,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       messages: [],
@@ -457,7 +471,7 @@ export default function App() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         id: initialId,
-        title: 'Đoạn chat mới',
+        title: newChatTitle,
         model: selectedModel,
         provider,
         system_instruction: systemInstruction,
@@ -470,13 +484,14 @@ export default function App() {
     if (!currentChat) return;
     fetch(`/api/conversations/${currentChatId}`, { method: 'DELETE' }).catch(console.error);
 
+    const defaultTitle = language === 'vi' ? 'Đoạn chat mới' : 'New chat';
     setConversations((prev) =>
       prev.map((c) =>
         c.id === currentChatId
           ? {
               ...c,
               messages: [],
-              title: 'Đoạn chat mới',
+              title: defaultTitle,
               updatedAt: Date.now(),
             }
           : c
@@ -484,61 +499,6 @@ export default function App() {
     );
   };
 
-  // Export current conversation as Markdown or JSON
-  const handleExportChat = (format: 'md' | 'json') => {
-    if (!currentChat || currentChat.messages.length === 0) return;
-
-    if (format === 'json') {
-      const payload = {
-        id: currentChat.id,
-        title: currentChat.title,
-        createdAt: currentChat.createdAt,
-        updatedAt: currentChat.updatedAt,
-        model: currentChat.model,
-        provider: currentChat.provider || provider,
-        messages: currentChat.messages.map((m) => ({
-          id: m.id,
-          sender: m.sender || (m.role === 'user' ? 'user' : 'ai'),
-          content: m.content,
-          timestamp: m.timestamp,
-          timeString: new Date(m.timestamp).toLocaleString(),
-          estimatedTokens: m.estimatedTokens || estimateTokens(m.content),
-        })),
-      };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-      downloadFile(blob, `${sanitizeTitle(currentChat.title)}.json`);
-      return;
-    }
-
-    // Markdown format
-    let md = `# ${currentChat.title}\n`;
-    md += `*Thời gian tạo: ${new Date(currentChat.createdAt).toLocaleString()}*\n`;
-    md += `*Mô hình: ${currentChat.model || selectedModel || 'AI'} (${provider === '9router' ? '9Router' : 'Cổng khác'})*\n\n---\n\n`;
-
-    currentChat.messages.forEach((m) => {
-      const senderLabel = (m.sender === 'user' || m.role === 'user') ? 'Người dùng' : 'Trợ lý AI';
-      const timeLabel = new Date(m.timestamp).toLocaleString();
-      const tokenEst = m.estimatedTokens || estimateTokens(m.content);
-      md += `### ${senderLabel} (${timeLabel}) [~${tokenEst} tokens]\n\n${m.content}\n\n`;
-      md += `---\n\n`;
-    });
-
-    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
-    downloadFile(blob, `${sanitizeTitle(currentChat.title)}.md`);
-  };
-
-  const sanitizeTitle = (str: string) => {
-    return str.replace(/[^a-zA-Z0-9_\u00C0-\u024F\u1E00-\u1EFF]/g, '_') || 'lich_su_chat';
-  };
-
-  const downloadFile = (blob: Blob, filename: string) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
 
   // Send message and stream
   const handleSendMessage = async (text: string) => {
@@ -562,7 +522,7 @@ export default function App() {
     const timestampNow = Date.now();
     const inputEstimatedTokens = estimateTokens(text);
 
-    // Tự động ghi nhận thống kê lượt gửi tin nhắn của người dùng (tự động lưu vào localStorage)
+    // Automatically record token usage for user message (persisted into localStorage & SQLite)
     recordTokenUsage({
       tokens: inputEstimatedTokens,
       conversationId: currentChat.id,
@@ -747,7 +707,7 @@ export default function App() {
         )
       );
 
-      // Tự động lưu thống kê token sinh ra vào hệ thống vĩnh viễn (auto-save)
+      // Automatically persist generated AI response tokens into analytics logs (auto-save)
       recordTokenUsage({
         tokens: finalTokens,
         conversationId: currentChat.id,
@@ -862,9 +822,9 @@ export default function App() {
         onOpenAnalyticsModal={() => setIsAnalyticsModalOpen(true)}
         hasCustomKey={Boolean(apiKey.trim())}
         hasDefaultKey={hasDefaultKey}
-        onExportChat={handleExportChat}
         provider={provider}
         totalSessionTokens={totalSessionTokens}
+        language={language}
       />
 
       {/* Main Container */}
@@ -873,7 +833,7 @@ export default function App() {
         <Header
           onToggleSidebar={() => setIsSidebarOpen(!isSidebarOpen)}
           isSidebarOpen={isSidebarOpen}
-          title={currentChat?.title || 'Đoạn chat mới'}
+          title={currentChat?.title || (language === 'vi' ? 'Đoạn chat mới' : 'New chat')}
           selectedModel={selectedModel}
           models={models}
           onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
@@ -884,6 +844,8 @@ export default function App() {
           onClearCurrentChat={handleClearCurrentChat}
           hasMessages={Boolean(currentChat && currentChat.messages.length > 0)}
           onOpenHelpModal={() => setIsHelpModalOpen(true)}
+          language={language}
+          onLanguageChange={handleLanguageChange}
         />
 
         {/* Invalid key banner prompt */}
@@ -892,14 +854,14 @@ export default function App() {
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-red-500 shrink-0" />
               <span>
-                {invalidKeyErrorMsg || 'Khóa API không hợp lệ hoặc đã hết hạn. Đã dừng kết nối với AI.'}
+                {invalidKeyErrorMsg || (language === 'vi' ? 'Khóa API không hợp lệ hoặc đã hết hạn. Đã dừng kết nối với AI.' : 'API Key is invalid or expired. AI connection paused.')}
               </span>
             </div>
             <button
               onClick={() => setIsApiKeyModalOpen(true)}
               className="px-2.5 py-0.5 rounded bg-red-600 hover:bg-red-500 text-white font-medium text-[11px] transition-colors cursor-pointer"
             >
-              Cập nhật Key
+              {language === 'vi' ? 'Cập nhật Key' : 'Update Key'}
             </button>
           </div>
         )}
@@ -919,6 +881,7 @@ export default function App() {
                       : undefined
                   }
                   onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
+                  language={language}
                 />
               ))}
               <div ref={messagesEndRef} className="h-4" />
@@ -932,10 +895,10 @@ export default function App() {
               </div>
 
               <h2 className="text-xl sm:text-2xl font-bold text-neutral-900 text-center tracking-tight mb-1">
-                ChatAI Studio
+                ChatAI
               </h2>
               <p className="text-xs sm:text-sm text-neutral-500 text-center max-w-md mb-6 leading-relaxed">
-                Trợ lý AI đàm thoại, viết mã nguồn, dịch thuật và phân tích hình ảnh hỗ trợ 9Router và các cổng AI tiêu chuẩn.
+                {t.welcomeSubtitle}
               </p>
 
               {/* API Key Box */}
@@ -946,25 +909,27 @@ export default function App() {
                   </div>
                   <div>
                     <h4 className="font-semibold text-xs text-neutral-900 flex items-center gap-1.5">
-                      <span>Cấu hình Cổng AI ({provider === '9router' ? '9Router' : 'Cổng khác'})</span>
+                      <span>{language === 'vi' ? 'Cấu hình Cổng AI' : 'AI Provider Configuration'} ({provider === '9router' ? '9Router' : (language === 'vi' ? 'Cổng khác' : 'Other')})</span>
                       {!isKeyInvalid ? (
                         hasAnyKey ? (
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-neutral-200 text-neutral-700">
-                            Key đã lưu ({models.length > 0 ? `${models.length} model` : 'Đang tải'})
+                            {models.length > 0 ? (language === 'vi' ? `Key đã lưu (${models.length} model)` : `Key saved (${models.length} models)`) : (language === 'vi' ? 'Key đã lưu (Đang tải)' : 'Key saved (Loading...)')}
                           </span>
                         ) : (
                           <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-medium">
-                            Chưa có API Key
+                            {language === 'vi' ? 'Chưa có API Key' : 'No API Key yet'}
                           </span>
                         )
                       ) : null}
                     </h4>
                     <p className="text-xs text-neutral-500 mt-0.5">
                       {isKeyInvalid
-                        ? 'Khóa hiện tại không hợp lệ. Vui lòng cập nhật key mới.'
+                        ? (language === 'vi' ? 'Khóa hiện tại không hợp lệ. Vui lòng cập nhật key mới.' : 'Current key is invalid. Please update with a valid API key.')
                         : !hasAnyKey
-                        ? 'Mục mô hình hiện đang trống. Vui lòng nhập API Key để nhận danh sách mô hình AI.'
-                        : `URL gọi AI: ${baseUrl ? baseUrl : (provider === '9router' ? '9Router mặc định' : 'Cổng tiêu chuẩn')}`}
+                        ? (language === 'vi' ? 'Mục mô hình hiện đang trống. Vui lòng nhập API Key để nhận danh sách mô hình AI.' : 'Model list is empty. Enter your API Key to retrieve available AI models.')
+                        : (language === 'vi' 
+                            ? `URL gọi AI: ${baseUrl ? baseUrl : (provider === '9router' ? '9Router mặc định' : 'Cổng tiêu chuẩn')}`
+                            : `AI Endpoint: ${baseUrl ? baseUrl : (provider === '9router' ? '9Router default' : 'Standard endpoint')}`)}
                     </p>
                   </div>
                 </div>
@@ -975,29 +940,31 @@ export default function App() {
                     className="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg border border-neutral-300 hover:bg-neutral-100 text-neutral-800 text-xs font-medium transition-colors cursor-pointer"
                   >
                     <BarChart3 className="w-3.5 h-3.5 text-neutral-500" />
-                    <span>Thống kê</span>
+                    <span>{t.monthlyStatsBtnShort}</span>
                   </button>
                   <button
                     onClick={() => setIsApiKeyModalOpen(true)}
                     className="flex-1 sm:flex-initial px-3.5 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold transition-colors cursor-pointer"
                   >
-                    Cài đặt Key
+                    {language === 'vi' ? 'Cài đặt Key' : 'API Key'}
                   </button>
                 </div>
               </div>
 
-              {/* Nếu chưa có API key và models trống trơn, hiển thị thông báo hướng dẫn rõ ràng */}
+              {/* Notice when no API key is configured and model list is empty */}
               {models.length === 0 && (
                 <div className="w-full max-w-xl mb-6 p-4 rounded-xl border border-dashed border-amber-300 bg-amber-50/60 text-center space-y-2">
                   <p className="text-xs text-amber-900 font-medium">
-                    ⚡ Danh sách mô hình AI đang để trống. Hãy bấm <strong>Cài đặt Key</strong> và nhập API Key của bạn (9Router hoặc cổng khác) để hệ thống nhận các mô hình AI.
+                    {language === 'vi' 
+                      ? '⚡ Danh sách mô hình AI đang để trống. Hãy bấm Cài đặt Key và nhập API Key của bạn (9Router hoặc cổng khác) để hệ thống nhận các mô hình AI.'
+                      : '⚡ AI model list is currently empty. Click API Key and enter your API key to populate available AI models.'}
                   </p>
                 </div>
               )}
 
               {/* Starter Prompt Cards */}
               <div className="w-full max-w-xl grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {STARTER_PROMPTS.map((item, idx) => {
+                {starterPrompts.map((item, idx) => {
                   const Icon = item.icon;
                   const estimatedPromptTokens = estimateTokens(item.prompt);
                   return (
@@ -1015,7 +982,7 @@ export default function App() {
                             </span>
                           </div>
                           <span className="text-[10px] text-neutral-400 font-mono">
-                            ~{formatTokenCount(estimatedPromptTokens)} tokens
+                            ~{formatTokenCount(estimatedPromptTokens)} {t.tokensCount}
                           </span>
                         </div>
                         <p className="text-[11px] text-neutral-500 line-clamp-2 leading-relaxed">
@@ -1023,7 +990,7 @@ export default function App() {
                         </p>
                       </div>
                       <div className="mt-2 flex items-center gap-1 text-[11px] text-neutral-800 font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-                        <span>Hỏi ngay</span>
+                        <span>{language === 'vi' ? 'Hỏi ngay' : 'Ask now'}</span>
                         <ArrowRight className="w-2.5 h-2.5" />
                       </div>
                     </button>
@@ -1042,6 +1009,7 @@ export default function App() {
           onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
           hasApiKey={hasAnyKey && models.length > 0}
           isKeyInvalid={isKeyInvalid}
+          language={language}
         />
       </div>
 
@@ -1056,6 +1024,7 @@ export default function App() {
         hasDefaultKey={hasDefaultKey}
         isKeyInvalid={isKeyInvalid}
         errorMessage={invalidKeyErrorMsg}
+        language={language}
       />
 
       {/* Recharts Analytics Dashboard Modal */}
@@ -1063,6 +1032,7 @@ export default function App() {
         isOpen={isAnalyticsModalOpen}
         onClose={() => setIsAnalyticsModalOpen(false)}
         conversations={conversations}
+        language={language}
       />
 
       {/* Help Modal */}
@@ -1070,6 +1040,7 @@ export default function App() {
         isOpen={isHelpModalOpen}
         onClose={() => setIsHelpModalOpen(false)}
         onOpenApiKeyModal={() => setIsApiKeyModalOpen(true)}
+        language={language}
       />
     </div>
   );

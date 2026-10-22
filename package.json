@@ -1,14 +1,10 @@
 {
   "name": "@bao826078/chatai",
-  "version": "0.2.0",
+  "version": "0.1.4",
   "type": "module",
   "description": "Ứng dụng Chat AI sử dụng apikey",
-  "bin": {
-    "chatai": "./bin/cli.cjs"
-  },
   "files": [
-    "dist",
-    "bin"
+    "dist"
   ],
   "scripts": {
     "dev": "tsx server.ts",

@@ -6,7 +6,6 @@ import {
   Key, 
   Cpu, 
   Sliders, 
-  Download, 
   X, 
   MessageSquare, 
   Edit2, 
@@ -19,8 +18,9 @@ import {
   BarChart3,
   AlertCircle
 } from 'lucide-react';
-import { Conversation, ModelOption, ApiProvider } from '../types';
+import { Conversation, ModelOption, ApiProvider, AppLanguage } from '../types';
 import { formatTokenCount } from '../utils/tokenEstimator';
+import { translations } from '../utils/i18n';
 
 interface SidebarProps {
   isOpen: boolean;
@@ -45,9 +45,9 @@ interface SidebarProps {
   onOpenAnalyticsModal: () => void;
   hasCustomKey: boolean;
   hasDefaultKey: boolean;
-  onExportChat: (format: 'md' | 'json') => void;
   provider: ApiProvider;
   totalSessionTokens?: number;
+  language?: AppLanguage;
 }
 
 const SYSTEM_PROMPT_PRESETS = [
@@ -91,16 +91,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onOpenApiKeyModal,
   onOpenAnalyticsModal,
   hasCustomKey,
-  onExportChat,
   provider,
   totalSessionTokens = 0,
+  language = 'en',
 }) => {
+  const t = translations[language] || translations.en;
   const [searchQuery, setSearchQuery] = useState('');
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [showSettingsDrawer, setShowSettingsDrawer] = useState(false);
 
-  // Lọc nhanh các đoạn chat đã lưu dựa trên TIÊU ĐỀ hoặc NỘI DUNG TIN NHẮN
+  const currentPresets = [
+    {
+      name: t.presetGeneral,
+      prompt: t.presetGeneralPrompt,
+    },
+    {
+      name: t.presetCoding,
+      prompt: t.presetCodingPrompt,
+    },
+    {
+      name: t.presetTranslator,
+      prompt: t.presetTranslatorPrompt,
+    },
+    {
+      name: t.presetWriter,
+      prompt: t.presetWriterPrompt,
+    },
+  ];
+
+  // Filter conversations by title or message content
   const normalizedQuery = searchQuery.toLowerCase().trim();
 
   const filteredConversations = conversations.filter((c) => {
@@ -135,7 +155,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     return date.toLocaleDateString([], { day: '2-digit', month: '2-digit' });
   };
 
-  // Helper để lấy đoạn trích tin nhắn khớp với tìm kiếm
+  // Helper to extract a message snippet matching the search query
   const getMatchingSnippet = (c: Conversation): string | null => {
     if (!normalizedQuery) return null;
     const msg = c.messages?.find((m) => (m.content || '').toLowerCase().includes(normalizedQuery));
@@ -177,16 +197,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   {provider === 'openai' ? 'OpenAI' :
                    provider === 'google' ? 'Google' :
                    provider === 'claude' ? 'Claude' :
-                   provider === '9router' ? '9Router' : 'Tùy chỉnh'}
+                   provider === '9router' ? '9Router' : (language === 'en' ? 'Custom' : 'Tùy chỉnh')}
                 </span>
               </h1>
             </div>
 
-            {/* Nút ẩn thanh bên ở góc sidebar */}
+            {/* Sidebar close button inside sidebar header (left side) */}
             <button
               onClick={onToggle}
               className="p-1 rounded-md text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
-              title="Ẩn thanh bên"
+              title={t.hideSidebar}
             >
               <PanelLeftClose className="w-4 h-4" />
             </button>
@@ -198,7 +218,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="w-full flex items-center justify-center gap-2 py-2 px-3 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-semibold transition-colors cursor-pointer shadow-xs"
           >
             <MessageSquarePlus className="w-3.5 h-3.5" />
-            <span>Đoạn chat mới</span>
+            <span>{t.newChatBtn}</span>
           </button>
         </div>
 
@@ -207,7 +227,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex items-center justify-between text-xs">
             <span className="flex items-center gap-1 text-[11px] font-semibold text-neutral-700">
               <Cpu className="w-3.5 h-3.5 text-neutral-500" />
-              Mô hình AI ({models.length}):
+              {t.modelSectionTitle} ({models.length}):
             </span>
             <div className="flex items-center gap-1.5">
               {models.length > 0 && (
@@ -216,7 +236,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   onClick={onRefreshModels}
                   disabled={isFetchingModels}
                   className="p-1 text-neutral-500 hover:text-neutral-800 hover:bg-neutral-200 rounded transition-colors"
-                  title="Tải lại danh sách mô hình từ API Key"
+                  title={t.refreshModels}
                 >
                   <RefreshCw className={`w-3 h-3 ${isFetchingModels ? 'animate-spin' : ''}`} />
                 </button>
@@ -226,12 +246,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 className="flex items-center gap-1 text-[11px] text-neutral-500 hover:text-neutral-900 font-medium cursor-pointer"
               >
                 <Sliders className="w-3 h-3" />
-                <span>{showSettingsDrawer ? 'Đóng' : 'Tùy chỉnh'}</span>
+                <span>{showSettingsDrawer ? (language === 'en' ? 'Close' : 'Đóng') : (language === 'en' ? 'Tune' : 'Tùy chỉnh')}</span>
               </button>
             </div>
           </div>
 
-          {/* Khi mới thiết lập chưa có API Key: Mục mô hình trống trơn */}
+          {/* Initial state without API Key: Empty model list with prompt to enter key */}
           {models.length === 0 ? (
             <button
               type="button"
@@ -240,9 +260,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             >
               <div className="flex items-center gap-1.5 truncate">
                 <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                <span className="truncate">Trống (Nhập API Key để tải)</span>
+                <span className="truncate">{t.noModelsAvailable}</span>
               </div>
-              <span className="text-[10px] underline shrink-0 ml-1">Nhập key</span>
+              <span className="text-[10px] underline shrink-0 ml-1">{language === 'en' ? 'Enter key' : 'Nhập key'}</span>
             </button>
           ) : (
             <div className="relative">
@@ -266,9 +286,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="flex items-center justify-between text-[10px] text-neutral-500 pt-0.5">
               <span className="flex items-center gap-1">
                 <Coins className="w-3 h-3" />
-                Bộ nhớ ngữ cảnh:
+                {language === 'en' ? 'Session context:' : 'Bộ nhớ ngữ cảnh:'}
               </span>
-              <span className="font-mono font-medium">~{formatTokenCount(totalSessionTokens)} tokens</span>
+              <span className="font-mono font-medium">~{formatTokenCount(totalSessionTokens)} {t.tokensCount}</span>
             </div>
           )}
 
@@ -277,7 +297,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div className="pt-2 pb-1 space-y-2.5 text-xs border-t border-neutral-200">
               <div>
                 <div className="flex justify-between text-[11px] text-neutral-500 mb-1">
-                  <span>Nhiệt độ (Sáng tạo):</span>
+                  <span>{t.creativityTitle}:</span>
                   <span className="font-mono font-semibold text-neutral-800">{temperature}</span>
                 </div>
                 <input
@@ -292,20 +312,22 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </div>
 
               <div>
-                <span className="text-[11px] text-neutral-500 block mb-1">Chỉ dẫn hệ thống:</span>
+                <span className="text-[11px] text-neutral-500 block mb-1">{t.systemPromptTitle}:</span>
                 <textarea
                   rows={2}
                   value={systemInstruction}
                   onChange={(e) => onChangeSystemInstruction(e.target.value)}
-                  placeholder="Ví dụ: Luôn trả lời ngắn gọn, thân thiện và bằng tiếng Việt..."
+                  placeholder={t.systemPromptPlaceholder}
                   className="w-full p-1.5 bg-white border border-neutral-200 rounded-lg text-xs text-neutral-800 placeholder-neutral-400 focus:outline-none focus:border-neutral-400 resize-none"
                 />
               </div>
 
               <div className="space-y-1">
-                <span className="text-[10px] text-neutral-400 uppercase tracking-wider font-semibold">Mẫu thiết lập nhanh:</span>
+                <span className="text-[10px] text-neutral-400 uppercase tracking-wider font-semibold">
+                  {language === 'en' ? 'Quick Presets:' : 'Mẫu thiết lập nhanh:'}
+                </span>
                 <div className="grid grid-cols-2 gap-1">
-                  {SYSTEM_PROMPT_PRESETS.map((preset, idx) => (
+                  {currentPresets.map((preset, idx) => (
                     <button
                       key={idx}
                       type="button"
@@ -328,7 +350,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <Search className="w-3.5 h-3.5 text-neutral-400 absolute left-2 pointer-events-none" />
             <input
               type="text"
-              placeholder="Tìm theo tiêu đề hoặc nội dung tin nhắn..."
+              placeholder={t.searchPlaceholder}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-7 pr-7 py-1 bg-white border border-neutral-200 rounded-lg text-xs text-neutral-800 placeholder-neutral-400 focus:outline-none focus:border-neutral-400 transition-colors"
@@ -337,7 +359,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <button
                 onClick={() => setSearchQuery('')}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 cursor-pointer"
-                title="Xóa tìm kiếm"
+                title={language === 'en' ? 'Clear search' : 'Xóa tìm kiếm'}
               >
                 <X className="w-3 h-3" />
               </button>
@@ -345,8 +367,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
           </div>
           {normalizedQuery && (
             <div className="text-[10px] text-neutral-400 mt-1 px-1 flex items-center justify-between">
-              <span>Đang lọc theo tiêu đề & nội dung</span>
-              <span>{filteredConversations.length} kết quả</span>
+              <span>{language === 'en' ? 'Filtering title & content' : 'Đang lọc theo tiêu đề & nội dung'}</span>
+              <span>{filteredConversations.length} {language === 'en' ? 'results' : 'kết quả'}</span>
             </div>
           )}
         </div>
@@ -355,7 +377,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex-1 overflow-y-auto px-2 py-1 space-y-0.5">
           {filteredConversations.length === 0 ? (
             <div className="p-4 text-center text-xs text-neutral-400">
-              {searchQuery ? 'Không tìm thấy cuộc trò chuyện phù hợp với từ khóa' : 'Chưa có lịch sử chat'}
+              {searchQuery ? t.noMatchingChats : t.noChatsYet}
             </div>
           ) : (
             filteredConversations.map((c) => {
@@ -394,7 +416,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       </div>
                     ) : (
                       <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium">{c.title || 'Đoạn chat mới'}</p>
+                        <p className="truncate font-medium">
+                          {(c.title === 'Đoạn chat mới' || c.title === 'New chat') ? t.newChatTitle : (c.title || t.newChatTitle)}
+                        </p>
                         
                         {snippet && (
                           <p className="text-[10px] text-neutral-500 truncate mt-0.5 bg-neutral-100 px-1 py-0.5 rounded border border-neutral-200">
@@ -404,7 +428,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
                         <span className="text-[10px] text-neutral-400 flex items-center gap-1 mt-0.5">
                           <Clock className="w-2.5 h-2.5" />
-                          {formatChatTime(c.updatedAt || c.createdAt)} • {c.messages?.length || 0} tin nhắn
+                          {formatChatTime(c.updatedAt || c.createdAt)} • {c.messages?.length || 0} {language === 'en' ? 'msgs' : 'tin nhắn'}
                         </span>
                       </div>
                     )}
@@ -415,14 +439,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                       <button
                         onClick={(e) => handleStartRename(c, e)}
                         className="p-1 text-neutral-400 hover:text-neutral-700 rounded"
-                        title="Đổi tên"
+                        title={language === 'en' ? 'Rename' : 'Đổi tên'}
                       >
                         <Edit2 className="w-3 h-3" />
                       </button>
                       <button
                         onClick={(e) => onDeleteChat(c.id, e)}
                         className="p-1 text-neutral-400 hover:text-red-500 rounded"
-                        title="Xóa đoạn chat"
+                        title={language === 'en' ? 'Delete' : 'Xóa đoạn chat'}
                       >
                         <Trash2 className="w-3 h-3" />
                       </button>
@@ -436,16 +460,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* Footer */}
         <div className="p-3 border-t border-neutral-200 bg-white/70 space-y-2">
-          {/* Nút Bảng Thống Kê Tài Nguyên Tháng */}
+          {/* Monthly Stats Button */}
           <button
             onClick={onOpenAnalyticsModal}
             className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg border border-neutral-200 hover:bg-neutral-100 text-neutral-800 text-xs font-medium transition-colors cursor-pointer shadow-xs"
           >
             <div className="flex items-center gap-1.5">
               <BarChart3 className="w-3.5 h-3.5 text-neutral-500" />
-              <span>Bảng thống kê tháng</span>
+              <span>{t.monthlyStatsBtn}</span>
             </div>
-            <span className="text-[10px] text-neutral-400">Mở</span>
+            <span className="text-[10px] text-neutral-400">{language === 'en' ? 'Open' : 'Mở'}</span>
           </button>
 
           {/* Key settings */}
@@ -457,57 +481,39 @@ export const Sidebar: React.FC<SidebarProps> = ({
               <div className={`w-1.5 h-1.5 rounded-full ${hasCustomKey ? 'bg-emerald-500' : 'bg-amber-400'}`} />
               <span className="text-[11px] font-medium">
                 {hasCustomKey 
-                  ? `Khóa ${
-                      provider === 'openai' ? 'OpenAI' :
-                      provider === 'google' ? 'Google' :
-                      provider === 'claude' ? 'Claude' :
-                      provider === '9router' ? '9Router' : 'Cổng khác'
-                    }: Đã lưu` 
-                  : 'Chưa có API Key'}
+                  ? (language === 'en' 
+                      ? `Key: ${provider === 'openai' ? 'OpenAI' : provider === 'google' ? 'Google' : provider === 'claude' ? 'Claude' : provider === '9router' ? '9Router' : 'Custom'} (Saved)`
+                      : `Khóa ${provider === 'openai' ? 'OpenAI' : provider === 'google' ? 'Google' : provider === 'claude' ? 'Claude' : provider === '9router' ? '9Router' : 'Cổng khác'}: Đã lưu`)
+                  : t.noKeyYet}
               </span>
             </div>
-            <span className="text-[11px] underline">Cài đặt</span>
+            <span className="text-[11px] underline">{language === 'en' ? 'Settings' : 'Cài đặt'}</span>
           </button>
 
           {/* Database indicator */}
           <div className="flex items-center justify-between text-[10px] text-neutral-500 font-medium px-0.5">
-            <span>Cơ sở dữ liệu:</span>
+            <span>{t.databaseLabel}</span>
             <span className="font-mono text-neutral-700 bg-neutral-100 px-1.5 py-0.5 rounded border border-neutral-200">
               SQLite (data/chatai.db)
             </span>
           </div>
 
-          {/* Export & Clear */}
-          <div className="flex items-center justify-between pt-1 text-[11px] text-neutral-500">
-            <div className="flex items-center gap-2">
+          {/* Clear All Chats */}
+          {conversations.length > 0 && (
+            <div className="flex items-center justify-end pt-1 text-[11px] text-neutral-500">
               <button
-                onClick={() => onExportChat('md')}
-                className="hover:text-neutral-800 flex items-center gap-1 cursor-pointer"
-                title="Xuất tệp Markdown"
+                onClick={() => {
+                  if (window.confirm(t.clearAllConfirm)) {
+                    onClearAllChats();
+                  }
+                }}
+                className="hover:text-red-600 transition-colors cursor-pointer"
+                title={t.clearAllChats}
               >
-                <Download className="w-3 h-3" />
-                <span>MD</span>
-              </button>
-              <button
-                onClick={() => onExportChat('json')}
-                className="hover:text-neutral-800 flex items-center gap-1 cursor-pointer"
-                title="Xuất tệp JSON"
-              >
-                <Download className="w-3 h-3" />
-                <span>JSON</span>
+                {t.clearAllChats}
               </button>
             </div>
-
-            {conversations.length > 0 && (
-              <button
-                onClick={onClearAllChats}
-                className="hover:text-red-600 transition-colors cursor-pointer"
-                title="Xóa tất cả các đoạn chat đã lưu"
-              >
-                Xóa tất cả
-              </button>
-            )}
-          </div>
+          )}
         </div>
       </aside>
     </>

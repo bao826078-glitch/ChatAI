@@ -7,6 +7,8 @@ import {
   Coins
 } from 'lucide-react';
 import { estimateTokens, formatTokenCount } from '../utils/tokenEstimator';
+import { AppLanguage } from '../types';
+import { translations } from '../utils/i18n';
 
 interface ChatInputProps {
   onSendMessage: (text: string) => void;
@@ -16,6 +18,7 @@ interface ChatInputProps {
   onOpenApiKeyModal: () => void;
   hasApiKey: boolean;
   isKeyInvalid?: boolean;
+  language?: AppLanguage;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -26,7 +29,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   onOpenApiKeyModal,
   hasApiKey,
   isKeyInvalid,
+  language = 'en',
 }) => {
+  const t = translations[language] || translations.en;
   const [text, setText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -55,7 +60,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
     try {
       const recognition = new SpeechRecognition();
-      recognition.lang = 'vi-VN';
+      recognition.lang = language === 'vi' ? 'vi-VN' : 'en-US';
       recognition.continuous = true;
       recognition.interimResults = true;
 
@@ -143,10 +148,10 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           onKeyDown={handleKeyDown}
           placeholder={
             isKeyInvalid
-              ? 'Khóa API không hợp lệ. Vui lòng bấm vào đây để cập nhật...'
+              ? (language === 'en' ? 'Invalid API Key. Click here to configure...' : 'Khóa API không hợp lệ. Vui lòng bấm vào đây để cập nhật...')
               : !hasApiKey
-              ? 'Vui lòng nhập API Key để tải mô hình và trò chuyện... (Bấm để cài đặt)'
-              : 'Nhắn tin cho AI... (Enter để gửi, Shift+Enter xuống dòng)'
+              ? (language === 'en' ? 'Please enter API Key to load models and chat... (Click to set up)' : 'Vui lòng nhập API Key để tải mô hình và trò chuyện... (Bấm để cài đặt)')
+              : t.inputPlaceholder
           }
           rows={1}
           disabled={disabled}
@@ -168,7 +173,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                   ? 'bg-red-500 text-white animate-pulse'
                   : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100'
               }`}
-              title={isRecording ? 'Đang lắng nghe... Bấm để dừng' : 'Nhập giọng nói bằng tiếng Việt'}
+              title={isRecording ? (language === 'en' ? 'Listening... Click to stop' : 'Đang lắng nghe... Bấm để dừng') : t.voiceInput}
             >
               <Mic className="w-4 h-4" />
             </button>
@@ -179,7 +184,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
             {estimatedInputTokens > 0 && (
               <span className="text-[11px] font-mono text-neutral-400 flex items-center gap-1">
                 <Coins className="w-3 h-3 text-neutral-400" />
-                ~{formatTokenCount(estimatedInputTokens)} tokens
+                ~{formatTokenCount(estimatedInputTokens)} {t.tokensCount}
               </span>
             )}
 
@@ -189,7 +194,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 type="button"
                 onClick={onStopStreaming}
                 className="p-2 rounded-xl bg-neutral-900 text-white hover:bg-neutral-800 transition-colors cursor-pointer shadow-xs"
-                title="Dừng phản hồi"
+                title={t.stopTooltip}
               >
                 <Square className="w-4 h-4 fill-current" />
               </button>
@@ -199,7 +204,7 @@ export const ChatInput: React.FC<ChatInputProps> = ({
                 onClick={() => handleSubmit()}
                 disabled={!text.trim() || disabled}
                 className="p-2 rounded-xl bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-30 disabled:hover:bg-neutral-900 transition-colors cursor-pointer shadow-xs disabled:cursor-not-allowed"
-                title="Gửi tin nhắn"
+                title={t.sendTooltip}
               >
                 <ArrowUp className="w-4 h-4" />
               </button>

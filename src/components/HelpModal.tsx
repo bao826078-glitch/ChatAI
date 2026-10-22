@@ -9,12 +9,14 @@ import {
   PackageCheck,
   Play
 } from 'lucide-react';
+import { AppLanguage } from '../types';
 
 interface HelpModalProps {
   isOpen: boolean;
   onClose: () => void;
   onOpenApiKeyModal: () => void;
   onOpenAnalyticsModal?: () => void;
+  language?: AppLanguage;
 }
 
 export const HelpModal: React.FC<HelpModalProps> = ({
@@ -22,6 +24,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({
   onClose,
   onOpenApiKeyModal,
   onOpenAnalyticsModal,
+  language = 'en',
 }) => {
   const [activeTab, setActiveTab] = useState<'guide' | 'npm'>('npm');
 
@@ -41,10 +44,10 @@ export const HelpModal: React.FC<HelpModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-sm sm:text-base text-neutral-900">
-                Thông Tin Hệ Thống & Hướng Dẫn Chạy NPM
+                {language === 'vi' ? 'Thông Tin Hệ Thống & Hướng Dẫn Chạy NPM' : 'System Information & NPM Guide'}
               </h3>
               <p className="text-xs text-neutral-500 font-medium">
-                Cài đặt thư viện, cấu hình cổng AI và chạy phần mềm cục bộ
+                {language === 'vi' ? 'Cài đặt thư viện, cấu hình cổng AI và chạy phần mềm cục bộ' : 'Install dependencies, configure AI endpoints and run locally'}
               </p>
             </div>
           </div>
@@ -67,7 +70,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({
                 : 'border-transparent text-neutral-500 hover:text-neutral-800'
             }`}
           >
-            Cách cài đặt & chạy bằng NPM
+            {language === 'vi' ? 'Cách cài đặt & chạy bằng NPM' : 'Setup & Run with NPM'}
           </button>
           <button
             type="button"
@@ -78,7 +81,7 @@ export const HelpModal: React.FC<HelpModalProps> = ({
                 : 'border-transparent text-neutral-500 hover:text-neutral-800'
             }`}
           >
-            Hướng dẫn tính năng AI
+            {language === 'vi' ? 'Tính năng & Kiến trúc' : 'Features & Architecture'}
           </button>
         </div>
 
@@ -179,13 +182,13 @@ export const HelpModal: React.FC<HelpModalProps> = ({
             }}
             className="text-xs font-bold underline text-neutral-800 hover:text-black cursor-pointer"
           >
-            Cài đặt API Key & URL
+            {language === 'vi' ? 'Cài đặt API Key & URL' : 'API Key & Provider Settings'}
           </button>
           <button
             onClick={onClose}
             className="px-4 py-1.5 rounded-lg bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold transition-colors cursor-pointer shadow-xs"
           >
-            Đóng
+            {language === 'vi' ? 'Đóng' : 'Close'}
           </button>
         </div>
       </div>

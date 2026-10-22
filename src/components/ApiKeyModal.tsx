@@ -16,7 +16,7 @@ import {
   Cpu,
   Bot
 } from 'lucide-react';
-import { ApiProvider, PopularProviderOption } from '../types';
+import { ApiProvider, PopularProviderOption, AppLanguage } from '../types';
 
 interface ApiKeyModalProps {
   isOpen: boolean;
@@ -28,6 +28,7 @@ interface ApiKeyModalProps {
   hasDefaultKey: boolean;
   isKeyInvalid?: boolean;
   errorMessage?: string;
+  language?: AppLanguage;
 }
 
 export interface ProviderItem {
@@ -77,9 +78,9 @@ export const PROVIDER_OPTIONS: ProviderItem[] = [
     name: '9Router',
     badge: '9Router',
     desc: 'Cổng AI thông minh đa mô hình',
-    defaultUrl: 'https://api.9router.com/v1',
+    defaultUrl: 'http://localhost/v1',
     keyPlaceholder: 'Dán mã API Key 9Router tại đây...',
-    urlPlaceholder: 'https://api.9router.com/v1 (Để trống dùng URL mặc định)',
+    urlPlaceholder: 'http://localhost/v1 (Để trống dùng URL mặc định)',
     helpText: 'Cổng định tuyến AI tích hợp 9Router cung cấp nhiều mô hình linh hoạt với một API Key duy nhất.',
   },
   {
@@ -148,6 +149,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
   onSaveApiKey,
   isKeyInvalid,
   errorMessage,
+  language = 'en',
 }) => {
   const [selectedProvider, setSelectedProvider] = useState<ApiProvider>(() => {
     return provider || 'openai';
@@ -166,7 +168,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
     message: isKeyInvalid ? errorMessage || 'Khóa API không hợp lệ hoặc đã hết hạn.' : undefined,
   });
 
-  // Đồng bộ khi modal được mở hoặc prop thay đổi
+  // Synchronize state when modal opens or props change
   useEffect(() => {
     setInputKey(apiKey);
     setSelectedProvider(provider || 'openai');
@@ -279,10 +281,10 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
             </div>
             <div>
               <h3 className="font-bold text-base sm:text-lg text-neutral-900">
-                Cài Đặt Khóa API & Cổng Kết Nối AI
+                {language === 'vi' ? 'Cài Đặt Khóa API & Cổng Kết Nối AI' : 'API Key & AI Provider Settings'}
               </h3>
               <p className="text-xs text-neutral-500 font-medium mt-0.5">
-                Hỗ trợ OpenAI, Google AI Studio, Claude (Anthropic), 9Router & Cổng khác
+                {language === 'vi' ? 'Hỗ trợ OpenAI, Google AI Studio, Claude (Anthropic), 9Router & Cổng khác' : 'Supports OpenAI, Google AI Studio, Claude (Anthropic), 9Router & Custom Endpoints'}
               </p>
             </div>
           </div>
@@ -298,7 +300,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
 
         {/* Modal Body */}
         <div className="p-5 sm:p-6 space-y-6 overflow-y-auto">
-          {/* Section 1: Chọn Nhà Cung Cấp */}
+          {/* Section 1: Choose AI Provider */}
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <label className="font-bold text-sm sm:text-base text-neutral-900 flex items-center gap-1.5">
@@ -351,7 +353,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
             </div>
           </div>
 
-          {/* Section 2: Địa chỉ URL gọi AI (API Endpoint URL) */}
+          {/* Section 2: AI Endpoint Base URL */}
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <label htmlFor="baseUrlInput" className="font-bold text-sm sm:text-base text-neutral-900 flex items-center gap-1.5">
@@ -368,7 +370,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
               )}
             </div>
 
-            {/* Nếu ở mục "Khác / Tùy chỉnh": Hiển thị menu chọn nhanh nhà cung cấp phổ biến */}
+            {/* Custom/Other Provider Preset Selection */}
             {selectedProvider === 'other' && (
               <div className="space-y-1.5 bg-neutral-50 p-2.5 rounded-xl border border-neutral-200">
                 <div className="flex items-center justify-between text-xs font-semibold text-neutral-700">
@@ -395,7 +397,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
               </div>
             )}
 
-            {/* Ô nhập link URL (để trống mặc định sẽ dùng URL chuẩn của nhà cung cấp) */}
+            {/* Base URL input field */}
             <div className="relative">
               <input
                 id="baseUrlInput"
@@ -421,7 +423,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
             </p>
           </div>
 
-          {/* Section 3: Mã Khóa API Key */}
+          {/* Section 3: API Key */}
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label htmlFor="apiKeyInput" className="font-bold text-sm sm:text-base text-neutral-900 flex items-center gap-1.5">
@@ -505,10 +507,10 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
             onClick={handleVerify}
             disabled={isVerifying || !canVerify}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-neutral-200 hover:bg-neutral-300 text-neutral-900 text-xs sm:text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer shadow-xs disabled:cursor-not-allowed"
-            title={canVerify ? 'Kiểm tra kết nối với API' : 'Vui lòng nhập API Key để kiểm tra kết nối'}
+            title={canVerify ? (language === 'vi' ? 'Kiểm tra kết nối với API' : 'Verify connection with API') : (language === 'vi' ? 'Vui lòng nhập API Key để kiểm tra kết nối' : 'Please enter an API Key to verify connection')}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isVerifying ? 'animate-spin' : ''}`} />
-            <span>{isVerifying ? 'Đang kiểm tra...' : 'Kiểm tra kết nối'}</span>
+            <span>{isVerifying ? (language === 'vi' ? 'Đang kiểm tra...' : 'Verifying...') : (language === 'vi' ? 'Kiểm tra kết nối' : 'Verify Connection')}</span>
           </button>
 
           <div className="flex items-center gap-2.5">
@@ -518,7 +520,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                 onClick={onClose}
                 className="px-4 py-2.5 rounded-xl text-neutral-700 hover:text-neutral-900 text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
               >
-                Đóng
+                {language === 'vi' ? 'Đóng' : 'Cancel'}
               </button>
             )}
             <button
@@ -526,7 +528,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
               onClick={handleSave}
               className="px-5 py-2.5 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs sm:text-sm font-bold transition-colors cursor-pointer shadow-xs"
             >
-              Lưu cấu hình
+              {language === 'vi' ? 'Lưu cấu hình' : 'Save Settings'}
             </button>
           </div>
         </div>

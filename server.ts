@@ -43,7 +43,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
 const DEFAULT_ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1';
-const DEFAULT_9ROUTER_BASE_URL = 'https://api.9router.com/v1';
+const DEFAULT_9ROUTER_BASE_URL = process.env.NINEROUTER_BASE_URL || 'http://localhost/v1';
 
 // Helper to instantiate Google AI Client
 function getGoogleAIClient(customApiKey?: string): GoogleGenAI {
