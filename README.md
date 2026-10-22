@@ -27,6 +27,8 @@
 </p>
 
 <p align="center">
+  🇻🇳 <a href="https://github.com/bao826078-glitch/ChatAI/blob/main/README_VI.md">Xem tài liệu tiếng Việt</a>
+  <br><br>
   <a href="#-features">Features</a> •
   <a href="#-quick-setup">Quick Setup</a> •
   <a href="#-docker--docker-compose">Docker</a> •
