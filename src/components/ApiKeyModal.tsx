@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Key, 
   CheckCircle2, 
@@ -9,12 +9,8 @@ import {
   ShieldCheck, 
   RefreshCw, 
   Trash2, 
-  Server,
-  Globe,
-  ChevronDown,
-  Sparkles,
-  Cpu,
-  Bot
+  Globe, 
+  ChevronDown 
 } from 'lucide-react';
 import { ApiProvider, PopularProviderOption, AppLanguage } from '../types';
 
@@ -42,16 +38,22 @@ export interface ProviderItem {
   helpText: string;
 }
 
-export const PROVIDER_OPTIONS: ProviderItem[] = [
+export const getProviderOptions = (lang: AppLanguage = 'en'): ProviderItem[] => [
   {
     id: 'openai',
     name: 'OpenAI (ChatGPT)',
     badge: 'OpenAI',
     desc: 'GPT-4o, GPT-4o-mini, o1, o3-mini...',
     defaultUrl: 'https://api.openai.com/v1',
-    keyPlaceholder: 'Dán mã OpenAI API Key (sk-...) tại đây...',
-    urlPlaceholder: 'https://api.openai.com/v1 (Để trống dùng URL mặc định)',
-    helpText: 'Sử dụng API Key từ OpenAI Platform (platform.openai.com) để truy cập GPT-4o, GPT-4o-mini, o1, o3-mini.',
+    keyPlaceholder: lang === 'vi' 
+      ? 'Dán mã OpenAI API Key (sk-...) tại đây...' 
+      : 'Paste OpenAI API Key (sk-...) here...',
+    urlPlaceholder: lang === 'vi' 
+      ? 'https://api.openai.com/v1 (Để trống dùng URL mặc định)' 
+      : 'https://api.openai.com/v1 (Leave empty for default URL)',
+    helpText: lang === 'vi' 
+      ? 'Sử dụng API Key từ OpenAI Platform (platform.openai.com) để truy cập GPT-4o, GPT-4o-mini, o1, o3-mini.' 
+      : 'Use API Key from OpenAI Platform (platform.openai.com) to access GPT-4o, GPT-4o-mini, o1, o3-mini.',
   },
   {
     id: 'google',
@@ -59,9 +61,15 @@ export const PROVIDER_OPTIONS: ProviderItem[] = [
     badge: 'Google',
     desc: 'Gemini 3.8 Flash, 3.7 Flash, Flash Latest...',
     defaultUrl: '',
-    keyPlaceholder: 'Dán mã Google API Key (AIzaSy...) tại đây...',
-    urlPlaceholder: 'Tự động kết nối Google Generative AI (Không cần nhập URL)',
-    helpText: 'Sử dụng API Key từ Google AI Studio (aistudio.google.com) với hạn mức miễn phí cao và tốc độ siêu nhanh.',
+    keyPlaceholder: lang === 'vi' 
+      ? 'Dán mã Google API Key (AIzaSy...) tại đây...' 
+      : 'Paste Google API Key (AIzaSy...) here...',
+    urlPlaceholder: lang === 'vi' 
+      ? 'Tự động kết nối Google Generative AI (Không cần nhập URL)' 
+      : 'Auto-connects to Google Generative AI (No URL required)',
+    helpText: lang === 'vi' 
+      ? 'Sử dụng API Key từ Google AI Studio (aistudio.google.com) với hạn mức miễn phí cao và tốc độ siêu nhanh.' 
+      : 'Use API Key from Google AI Studio (aistudio.google.com) with generous free tier and ultra-fast speed.',
   },
   {
     id: 'claude',
@@ -69,74 +77,92 @@ export const PROVIDER_OPTIONS: ProviderItem[] = [
     badge: 'Claude',
     desc: 'Claude 3.5 Sonnet, 3.5 Haiku, Opus...',
     defaultUrl: 'https://api.anthropic.com/v1',
-    keyPlaceholder: 'Dán mã Anthropic API Key (sk-ant-...) tại đây...',
-    urlPlaceholder: 'https://api.anthropic.com/v1 (Để trống dùng URL mặc định)',
-    helpText: 'Sử dụng API Key từ Anthropic Console (console.anthropic.com) để kết nối Claude 3.5 Sonnet và Claude 3.5 Haiku.',
+    keyPlaceholder: lang === 'vi' 
+      ? 'Dán mã Anthropic API Key (sk-ant-...) tại đây...' 
+      : 'Paste Anthropic API Key (sk-ant-...) here...',
+    urlPlaceholder: lang === 'vi' 
+      ? 'https://api.anthropic.com/v1 (Để trống dùng URL mặc định)' 
+      : 'https://api.anthropic.com/v1 (Leave empty for default URL)',
+    helpText: lang === 'vi' 
+      ? 'Sử dụng API Key từ Anthropic Console (console.anthropic.com) để kết nối Claude 3.5 Sonnet và Claude 3.5 Haiku.' 
+      : 'Use API Key from Anthropic Console (console.anthropic.com) to connect Claude 3.5 Sonnet and Haiku.',
   },
   {
     id: '9router',
     name: '9Router',
     badge: '9Router',
-    desc: 'Cổng AI thông minh đa mô hình',
+    desc: lang === 'vi' ? 'Cổng AI thông minh đa mô hình' : 'Smart multi-model AI routing gateway',
     defaultUrl: 'http://localhost/v1',
-    keyPlaceholder: 'Dán mã API Key 9Router tại đây...',
-    urlPlaceholder: 'http://localhost/v1 (Để trống dùng URL mặc định)',
-    helpText: 'Cổng định tuyến AI tích hợp 9Router cung cấp nhiều mô hình linh hoạt với một API Key duy nhất.',
+    keyPlaceholder: lang === 'vi' 
+      ? 'Dán mã API Key 9Router tại đây...' 
+      : 'Paste 9Router API Key here...',
+    urlPlaceholder: lang === 'vi' 
+      ? 'http://localhost/v1 (Để trống dùng URL mặc định)' 
+      : 'http://localhost/v1 (Leave empty for default URL)',
+    helpText: lang === 'vi' 
+      ? 'Cổng định tuyến AI tích hợp 9Router cung cấp nhiều mô hình linh hoạt với một API Key duy nhất.' 
+      : 'Integrated 9Router gateway provides multiple flexible models with a single API Key.',
   },
   {
     id: 'other',
-    name: 'Khác / Tùy chỉnh',
-    badge: 'Tùy chỉnh',
+    name: lang === 'vi' ? 'Khác / Tùy chỉnh' : 'Other / Custom',
+    badge: lang === 'vi' ? 'Tùy chỉnh' : 'Custom',
     desc: 'DeepSeek, Groq, OpenRouter, Together, Ollama...',
     defaultUrl: '',
-    keyPlaceholder: 'Dán mã API Key tương ứng với dịch vụ tại đây...',
-    urlPlaceholder: 'Nhập địa chỉ URL gọi AI (ví dụ: https://api.deepseek.com/v1)...',
-    helpText: 'Tương thích tiêu chuẩn OpenAI API: hỗ trợ DeepSeek, Groq, OpenRouter, Mistral, Ollama cục bộ hoặc máy chủ proxy tùy chỉnh.',
+    keyPlaceholder: lang === 'vi' 
+      ? 'Dán mã API Key tương ứng với dịch vụ tại đây...' 
+      : 'Paste service API Key here...',
+    urlPlaceholder: lang === 'vi' 
+      ? 'Nhập địa chỉ URL gọi AI (ví dụ: https://api.deepseek.com/v1)...' 
+      : 'Enter AI endpoint URL (e.g. https://api.deepseek.com/v1)...',
+    helpText: lang === 'vi' 
+      ? 'Tương thích tiêu chuẩn OpenAI API: hỗ trợ DeepSeek, Groq, OpenRouter, Mistral, Ollama cục bộ hoặc máy chủ proxy tùy chỉnh.' 
+      : 'OpenAI-compatible standard: supports DeepSeek, Groq, OpenRouter, Mistral, local Ollama or custom proxy servers.',
   },
 ];
 
-const POPULAR_OTHER_PROVIDERS: PopularProviderOption[] = [
+export const getPopularOtherProviders = (lang: AppLanguage = 'en'): PopularProviderOption[] => [
   {
     id: 'custom',
-    name: 'Tùy chỉnh URL (tự do nhập địa chỉ URL)',
+    name: lang === 'vi' ? 'Tùy chỉnh URL (tự do nhập địa chỉ URL)' : 'Custom URL (freely enter custom endpoint)',
     url: '',
-    note: 'Tự nhập địa chỉ URL gọi AI bất kỳ',
+    note: lang === 'vi' ? 'Tự nhập địa chỉ URL gọi AI bất kỳ' : 'Enter any custom AI endpoint URL',
   },
   {
     id: 'deepseek',
     name: 'DeepSeek API',
     url: 'https://api.deepseek.com/v1',
-    note: 'Mô hình lập luận DeepSeek-R1 và V3 chuyên sâu',
+    note: lang === 'vi' ? 'Mô hình lập luận DeepSeek-R1 và V3 chuyên sâu' : 'DeepSeek-R1 and V3 advanced reasoning models',
   },
   {
     id: 'groq',
     name: 'Groq Cloud',
     url: 'https://api.groq.com/openai/v1',
-    note: 'Tốc độ xử lý siêu nhanh độ trễ cực thấp LPU',
+    note: lang === 'vi' ? 'Tốc độ xử lý siêu nhanh độ trễ cực thấp LPU' : 'Ultra-fast low-latency LPU inference',
   },
   {
     id: 'openrouter',
     name: 'OpenRouter AI',
     url: 'https://openrouter.ai/api/v1',
-    note: 'Cổng định tuyến kết nối hàng trăm mô hình toàn cầu',
+    note: lang === 'vi' ? 'Cổng định tuyến kết nối hàng trăm mô hình toàn cầu' : 'Unified routing gateway connecting hundreds of global models',
   },
   {
     id: 'together',
     name: 'Together AI',
     url: 'https://api.together.xyz/v1',
-    note: 'Hạ tầng AI mã nguồn mở hiệu năng cao',
+    note: lang === 'vi' ? 'Hạ tầng AI mã nguồn mở hiệu năng cao' : 'High-performance open-source AI infrastructure',
   },
   {
     id: 'mistral',
     name: 'Mistral AI',
     url: 'https://api.mistral.ai/v1',
-    note: 'Mô hình châu Âu chất lượng cao Mistral Large / Codestral',
+    note: lang === 'vi' ? 'Mô hình châu Âu chất lượng cao Mistral Large / Codestral' : 'European AI: Mistral Large / Codestral models',
   },
   {
     id: 'ollama',
     name: 'Ollama (Local AI)',
     url: 'http://localhost:11434/v1',
-    note: 'Chạy AI nội bộ không tốn phí trên máy tính cá nhân',
+    note: lang === 'vi' ? 'Chạy AI nội bộ không tốn phí trên máy tính cá nhân' : 'Run local AI models for free on your own computer',
   },
 ];
 
@@ -165,8 +191,14 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
     message?: string;
   }>({
     type: isKeyInvalid ? 'error' : 'idle',
-    message: isKeyInvalid ? errorMessage || 'Khóa API không hợp lệ hoặc đã hết hạn.' : undefined,
+    message: isKeyInvalid 
+      ? errorMessage || (language === 'vi' ? 'Khóa API không hợp lệ hoặc đã hết hạn.' : 'API Key is invalid or expired.') 
+      : undefined,
   });
+
+  const providerOptions = useMemo(() => getProviderOptions(language), [language]);
+  const popularProviders = useMemo(() => getPopularOtherProviders(language), [language]);
+  const currentProviderConfig = providerOptions.find((p) => p.id === selectedProvider) || providerOptions[0];
 
   // Synchronize state when modal opens or props change
   useEffect(() => {
@@ -174,27 +206,25 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
     setSelectedProvider(provider || 'openai');
     if (baseUrl !== undefined) {
       setInputBaseUrl(baseUrl);
-      const matched = POPULAR_OTHER_PROVIDERS.find((p) => p.url === baseUrl && p.url !== '');
+      const matched = popularProviders.find((p) => p.url === baseUrl && p.url !== '');
       if (matched) {
         setSelectedPopularPreset(matched.id);
       } else {
         setSelectedPopularPreset('custom');
       }
     }
-  }, [apiKey, provider, baseUrl, isOpen]);
+  }, [apiKey, provider, baseUrl, isOpen, popularProviders]);
 
   useEffect(() => {
     if (isKeyInvalid) {
       setVerifyStatus({
         type: 'error',
-        message: errorMessage || 'Khóa API không hợp lệ hoặc đã hết hạn.',
+        message: errorMessage || (language === 'vi' ? 'Khóa API không hợp lệ hoặc đã hết hạn.' : 'API Key is invalid or expired.'),
       });
     }
-  }, [isKeyInvalid, errorMessage]);
+  }, [isKeyInvalid, errorMessage, language]);
 
   if (!isOpen) return null;
-
-  const currentProviderConfig = PROVIDER_OPTIONS.find((p) => p.id === selectedProvider) || PROVIDER_OPTIONS[0];
 
   const handleProviderChange = (newProvider: ApiProvider) => {
     setSelectedProvider(newProvider);
@@ -205,7 +235,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
 
   const handlePopularPresetChange = (presetId: string) => {
     setSelectedPopularPreset(presetId);
-    const found = POPULAR_OTHER_PROVIDERS.find((p) => p.id === presetId);
+    const found = popularProviders.find((p) => p.id === presetId);
     if (found) {
       setInputBaseUrl(found.url);
     }
@@ -233,18 +263,24 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
       if (data.ok) {
         setVerifyStatus({
           type: 'success',
-          message: data.message || `Kết nối thành công với ${currentProviderConfig.name}! Khóa API hợp lệ.`,
+          message: data.message || (language === 'vi' 
+            ? `Kết nối thành công với ${currentProviderConfig.name}! Khóa API hợp lệ.` 
+            : `Connection to ${currentProviderConfig.name} succeeded! API Key is valid.`),
         });
       } else {
         setVerifyStatus({
           type: 'error',
-          message: data.error || 'Khóa API hoặc địa chỉ URL không hợp lệ.',
+          message: data.error || (language === 'vi' 
+            ? 'Khóa API hoặc địa chỉ URL không hợp lệ.' 
+            : 'Invalid API Key or endpoint URL.'),
         });
       }
     } catch (e: any) {
       setVerifyStatus({
         type: 'error',
-        message: e?.message || 'Không thể kết nối đến máy chủ để kiểm tra.',
+        message: e?.message || (language === 'vi' 
+          ? 'Không thể kết nối đến máy chủ để kiểm tra.' 
+          : 'Could not connect to the server for verification.'),
       });
     } finally {
       setIsVerifying(false);
@@ -284,7 +320,9 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                 {language === 'vi' ? 'Cài Đặt Khóa API & Cổng Kết Nối AI' : 'API Key & AI Provider Settings'}
               </h3>
               <p className="text-xs text-neutral-500 font-medium mt-0.5">
-                {language === 'vi' ? 'Hỗ trợ OpenAI, Google AI Studio, Claude (Anthropic), 9Router & Cổng khác' : 'Supports OpenAI, Google AI Studio, Claude (Anthropic), 9Router & Custom Endpoints'}
+                {language === 'vi' 
+                  ? 'Hỗ trợ OpenAI, Google AI Studio, Claude (Anthropic), 9Router & Cổng khác' 
+                  : 'Supports OpenAI, Google AI Studio, Claude (Anthropic), 9Router & Custom Endpoints'}
               </p>
             </div>
           </div>
@@ -292,6 +330,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
             <button
               onClick={onClose}
               className="p-2 rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
+              title={language === 'vi' ? 'Đóng' : 'Close'}
             >
               <X className="w-5 h-5" />
             </button>
@@ -304,15 +343,15 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <label className="font-bold text-sm sm:text-base text-neutral-900 flex items-center gap-1.5">
-                <span>1. Chọn Nhà Cung Cấp API:</span>
+                <span>{language === 'vi' ? '1. Chọn Nhà Cung Cấp API:' : '1. Select API Provider:'}</span>
               </label>
               <span className="text-[11px] font-semibold text-neutral-500 bg-neutral-100 px-2 py-0.5 rounded-md border border-neutral-200">
-                5 Nhà cung cấp
+                {language === 'vi' ? `${providerOptions.length} Nhà cung cấp` : `${providerOptions.length} Providers`}
               </span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-              {PROVIDER_OPTIONS.map((item) => {
+              {providerOptions.map((item) => {
                 const isSelected = selectedProvider === item.id;
                 return (
                   <button
@@ -357,7 +396,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
               <label htmlFor="baseUrlInput" className="font-bold text-sm sm:text-base text-neutral-900 flex items-center gap-1.5">
-                <span>2. Địa chỉ URL Endpoint ({currentProviderConfig.badge}):</span>
+                <span>{language === 'vi' ? '2. Địa chỉ URL Endpoint' : '2. Endpoint Base URL'} ({currentProviderConfig.badge}):</span>
               </label>
               {inputBaseUrl && (
                 <button
@@ -365,7 +404,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                   onClick={handleClearUrl}
                   className="text-xs text-neutral-600 hover:text-neutral-900 font-medium underline cursor-pointer"
                 >
-                  Xóa trống ô URL
+                  {language === 'vi' ? 'Xóa trống ô URL' : 'Clear URL'}
                 </button>
               )}
             </div>
@@ -376,9 +415,11 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                 <div className="flex items-center justify-between text-xs font-semibold text-neutral-700">
                   <span className="flex items-center gap-1.5">
                     <Globe className="w-3.5 h-3.5 text-neutral-500" />
-                    <span>Chọn nhanh mẫu máy chủ AI phổ biến:</span>
+                    <span>{language === 'vi' ? 'Chọn nhanh mẫu máy chủ AI phổ biến:' : 'Quick-select popular AI provider:'}</span>
                   </span>
-                  <span className="text-[11px] text-neutral-500 font-normal">Tự điền URL tương ứng</span>
+                  <span className="text-[11px] text-neutral-500 font-normal">
+                    {language === 'vi' ? 'Tự điền URL tương ứng' : 'Auto-fills endpoint URL'}
+                  </span>
                 </div>
                 <div className="relative">
                   <select
@@ -386,7 +427,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                     onChange={(e) => handlePopularPresetChange(e.target.value)}
                     className="w-full pl-3 pr-8 py-2 bg-white border border-neutral-300 rounded-lg text-xs font-semibold text-neutral-900 focus:outline-none focus:border-neutral-800 appearance-none cursor-pointer shadow-xs"
                   >
-                    {POPULAR_OTHER_PROVIDERS.map((item) => (
+                    {popularProviders.map((item) => (
                       <option key={item.id} value={item.id} className="text-neutral-900 py-1">
                         {item.name} {item.url ? `— (${item.url})` : ''}
                       </option>
@@ -407,7 +448,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                   const val = e.target.value;
                   setInputBaseUrl(val);
                   if (selectedProvider === 'other') {
-                    const matched = POPULAR_OTHER_PROVIDERS.find((p) => p.url === val.trim() && p.url !== '');
+                    const matched = popularProviders.find((p) => p.url === val.trim() && p.url !== '');
                     setSelectedPopularPreset(matched ? matched.id : 'custom');
                   }
                 }}
@@ -418,8 +459,12 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
 
             <p className="text-xs text-neutral-600 font-medium leading-relaxed">
               {currentProviderConfig.defaultUrl 
-                ? `Mặc định sẽ gọi về ${currentProviderConfig.defaultUrl}. Bạn có thể để trống ô này hoặc nhập URL máy chủ proxy/cổng trung gian nếu cần.`
-                : 'Bạn có thể để trống ô này để dùng cấu hình mặc định hoặc nhập địa chỉ URL tùy chỉnh.'}
+                ? (language === 'vi' 
+                    ? `Mặc định sẽ gọi về ${currentProviderConfig.defaultUrl}. Bạn có thể để trống ô này hoặc nhập URL máy chủ proxy/cổng trung gian nếu cần.`
+                    : `Defaults to ${currentProviderConfig.defaultUrl}. You may leave this blank or specify a custom proxy/gateway URL if needed.`)
+                : (language === 'vi' 
+                    ? 'Bạn có thể để trống ô này để dùng cấu hình mặc định hoặc nhập địa chỉ URL tùy chỉnh.'
+                    : 'You may leave this blank to use default configuration or enter a custom endpoint URL.')}
             </p>
           </div>
 
@@ -427,10 +472,10 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
           <div className="space-y-2">
             <div className="flex items-center justify-between">
               <label htmlFor="apiKeyInput" className="font-bold text-sm sm:text-base text-neutral-900 flex items-center gap-1.5">
-                <span>3. Mã Khóa API Key ({currentProviderConfig.name}):</span>
+                <span>{language === 'vi' ? '3. Mã Khóa API Key' : '3. API Key'} ({currentProviderConfig.name}):</span>
                 {inputKey.trim() && (
                   <span className="text-emerald-700 font-semibold text-xs flex items-center gap-1 ml-1.5 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-300">
-                    <CheckCircle2 className="w-3.5 h-3.5" /> Đã nhập
+                    <CheckCircle2 className="w-3.5 h-3.5" /> {language === 'vi' ? 'Đã nhập' : 'Entered'}
                   </span>
                 )}
               </label>
@@ -453,7 +498,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                   type="button"
                   onClick={() => setShowKey(!showKey)}
                   className="p-1.5 text-neutral-500 hover:text-neutral-900 transition-colors cursor-pointer"
-                  title={showKey ? 'Ẩn khóa' : 'Hiện khóa'}
+                  title={showKey ? (language === 'vi' ? 'Ẩn khóa' : 'Hide key') : (language === 'vi' ? 'Hiện khóa' : 'Show key')}
                 >
                   {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -462,7 +507,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                     type="button"
                     onClick={handleClearKey}
                     className="p-1.5 text-neutral-500 hover:text-red-600 transition-colors cursor-pointer"
-                    title="Xóa khóa"
+                    title={language === 'vi' ? 'Xóa khóa' : 'Clear key'}
                   >
                     <Trash2 className="w-4 h-4" />
                   </button>
@@ -496,7 +541,11 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
           {/* Security Note */}
           <div className="flex items-center gap-2 text-xs text-neutral-600 font-medium pt-1">
             <ShieldCheck className="w-4 h-4 shrink-0 text-neutral-500" />
-            <span>Khóa API và cấu hình được lưu trữ cục bộ bảo mật trên trình duyệt (localStorage), không lưu trên máy chủ chung.</span>
+            <span>
+              {language === 'vi'
+                ? 'Khóa API và cấu hình được lưu trữ cục bộ bảo mật trên trình duyệt (localStorage), không lưu trên máy chủ chung.'
+                : 'API key and settings are securely stored locally in your browser (localStorage), never exposed to external servers.'}
+            </span>
           </div>
         </div>
 
@@ -507,10 +556,16 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
             onClick={handleVerify}
             disabled={isVerifying || !canVerify}
             className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-neutral-200 hover:bg-neutral-300 text-neutral-900 text-xs sm:text-sm font-bold transition-colors disabled:opacity-40 cursor-pointer shadow-xs disabled:cursor-not-allowed"
-            title={canVerify ? (language === 'vi' ? 'Kiểm tra kết nối với API' : 'Verify connection with API') : (language === 'vi' ? 'Vui lòng nhập API Key để kiểm tra kết nối' : 'Please enter an API Key to verify connection')}
+            title={canVerify 
+              ? (language === 'vi' ? 'Kiểm tra kết nối với API' : 'Verify connection with API') 
+              : (language === 'vi' ? 'Vui lòng nhập API Key để kiểm tra kết nối' : 'Please enter an API Key to verify connection')}
           >
             <RefreshCw className={`w-3.5 h-3.5 ${isVerifying ? 'animate-spin' : ''}`} />
-            <span>{isVerifying ? (language === 'vi' ? 'Đang kiểm tra...' : 'Verifying...') : (language === 'vi' ? 'Kiểm tra kết nối' : 'Verify Connection')}</span>
+            <span>
+              {isVerifying 
+                ? (language === 'vi' ? 'Đang kiểm tra...' : 'Verifying...') 
+                : (language === 'vi' ? 'Kiểm tra kết nối' : 'Verify Connection')}
+            </span>
           </button>
 
           <div className="flex items-center gap-2.5">
@@ -520,7 +575,7 @@ export const ApiKeyModal: React.FC<ApiKeyModalProps> = ({
                 onClick={onClose}
                 className="px-4 py-2.5 rounded-xl text-neutral-700 hover:text-neutral-900 text-xs sm:text-sm font-semibold transition-colors cursor-pointer"
               >
-                {language === 'vi' ? 'Đóng' : 'Cancel'}
+                {language === 'vi' ? 'Đóng' : 'Close'}
               </button>
             )}
             <button
