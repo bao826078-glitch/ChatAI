@@ -93,10 +93,16 @@ export const HelpModal: React.FC<HelpModalProps> = ({
               <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50 space-y-2">
                 <div className="flex items-center gap-2 font-bold text-neutral-900 text-xs sm:text-sm">
                   <PackageCheck className="w-4 h-4 text-emerald-600" />
-                  <span>Bước 1: Cài đặt phần mềm & thư viện (npm install)</span>
+                  <span>
+                    {language === 'vi' 
+                      ? 'Bước 1: Cài đặt phần mềm & thư viện (npm install)' 
+                      : 'Step 1: Install software & dependencies (npm install)'}
+                  </span>
                 </div>
                 <p className="text-neutral-600 leading-relaxed font-medium">
-                  Mở Terminal (cmd hoặc PowerShell) tại thư mục dự án và chạy lệnh sau để tải toàn bộ các thư viện quan trọng:
+                  {language === 'vi' 
+                    ? 'Mở Terminal (cmd hoặc PowerShell) tại thư mục dự án và chạy lệnh sau để tải toàn bộ các thư viện quan trọng:'
+                    : 'Open Terminal (cmd or PowerShell) in the project root directory and run the following command to download all dependencies:'}
                 </p>
                 <div className="p-2.5 rounded-lg bg-neutral-900 text-neutral-100 font-mono text-xs select-all flex items-center justify-between">
                   <span>npm install</span>
@@ -107,31 +113,53 @@ export const HelpModal: React.FC<HelpModalProps> = ({
               <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50 space-y-2">
                 <div className="flex items-center gap-2 font-bold text-neutral-900 text-xs sm:text-sm">
                   <Play className="w-4 h-4 text-neutral-800" />
-                  <span>Bước 2: Chạy ứng dụng phát triển (npm run dev)</span>
+                  <span>
+                    {language === 'vi' 
+                      ? 'Bước 2: Chạy ứng dụng phát triển (npm run dev)' 
+                      : 'Step 2: Run development application (npm run dev)'}
+                  </span>
                 </div>
                 <p className="text-neutral-600 leading-relaxed font-medium">
-                  Sau khi cài xong thư viện, khởi động máy chủ bằng lệnh:
+                  {language === 'vi' 
+                    ? 'Sau khi cài xong thư viện, khởi động máy chủ bằng lệnh:' 
+                    : 'After dependencies are installed, start the application server using:'}
                 </p>
                 <div className="p-2.5 rounded-lg bg-neutral-900 text-neutral-100 font-mono text-xs select-all flex items-center justify-between">
                   <span>npm run dev</span>
                 </div>
                 <p className="text-neutral-500 text-[11px]">
-                  Máy chủ sẽ chạy tại cổng mặc định: <code className="bg-neutral-200 px-1 py-0.5 rounded text-neutral-800 font-mono">http://localhost:8088</code>
+                  {language === 'vi' ? 'Máy chủ sẽ chạy tại cổng mặc định:' : 'The server will run on default port:'}{' '}
+                  <code className="bg-neutral-200 px-1 py-0.5 rounded text-neutral-800 font-mono">http://localhost:8088</code>
                 </p>
               </div>
 
               {/* Step 3: Important Libraries Overview */}
               <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50 space-y-2">
                 <span className="font-bold text-neutral-900 text-xs block">
-                  Các thư viện quan trọng cốt lõi đã được tích hợp chuẩn xác:
+                  {language === 'vi' 
+                    ? 'Các thư viện quan trọng cốt lõi đã được tích hợp chuẩn xác:' 
+                    : 'Core integrated dependencies and technology stack:'}
                 </span>
                 <ul className="space-y-1.5 text-[11px] text-neutral-600 list-disc pl-4 leading-relaxed font-medium">
-                  <li><strong>express</strong> &amp; <strong>tsx</strong>: Máy chủ backend xử lý API endpoint, proxy bảo vệ khóa API và SSE streaming.</li>
-                  <li><strong>recharts</strong>: Biểu đồ thanh trực quan hóa lượng token tiêu thụ và thống kê các tháng gần nhất.</li>
-                  <li><strong>lucide-react</strong>: Hệ thống biểu tượng sắc nét, trực quan.</li>
-                  <li><strong>marked</strong>: Trình phân giải cú pháp Markdown và mã lệnh lập trình.</li>
-                  <li><strong>tailwindcss</strong>: Hệ thống giao diện hiện đại, tinh gọn theo chế độ sáng (light mode).</li>
-                  <li><strong>@google/genai</strong>: Bộ SDK kết nối API trí tuệ nhân tạo.</li>
+                  {language === 'vi' ? (
+                    <>
+                      <li><strong>express</strong> &amp; <strong>tsx</strong>: Máy chủ backend xử lý API endpoint, proxy bảo vệ khóa API và SSE streaming.</li>
+                      <li><strong>recharts</strong>: Biểu đồ thanh trực quan hóa lượng token tiêu thụ và thống kê các tháng gần nhất.</li>
+                      <li><strong>lucide-react</strong>: Hệ thống biểu tượng sắc nét, trực quan.</li>
+                      <li><strong>marked</strong>: Trình phân giải cú pháp Markdown và mã lệnh lập trình.</li>
+                      <li><strong>tailwindcss</strong>: Hệ thống giao diện hiện đại, tinh gọn theo chế độ sáng (light mode).</li>
+                      <li><strong>@google/genai</strong>: Bộ SDK kết nối API trí tuệ nhân tạo.</li>
+                    </>
+                  ) : (
+                    <>
+                      <li><strong>express</strong> &amp; <strong>tsx</strong>: Backend server handling API endpoints, secure key proxy, and SSE streaming.</li>
+                      <li><strong>recharts</strong>: Interactive charts visualizing token consumption and monthly analytics.</li>
+                      <li><strong>lucide-react</strong>: Crisp, modern UI icons.</li>
+                      <li><strong>marked</strong>: Markdown syntax parser and formatted code block rendering.</li>
+                      <li><strong>tailwindcss</strong>: Modern, clean minimalist light-mode styling system.</li>
+                      <li><strong>@google/genai</strong>: Official Google Generative AI SDK integration.</li>
+                    </>
+                  )}
                 </ul>
               </div>
             </div>
@@ -141,10 +169,16 @@ export const HelpModal: React.FC<HelpModalProps> = ({
               <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50 space-y-1.5">
                 <span className="font-bold text-xs sm:text-sm text-neutral-900 flex items-center gap-1.5">
                   <Server className="w-4 h-4 text-neutral-600" />
-                  <span>Hỗ trợ OpenAI, Google, Claude, 9Router & Cổng khác</span>
+                  <span>
+                    {language === 'vi' 
+                      ? 'Hỗ trợ OpenAI, Google, Claude, 9Router & Cổng khác' 
+                      : 'Supports OpenAI, Google, Claude, 9Router & Custom Endpoints'}
+                  </span>
                 </span>
                 <p className="text-neutral-600 leading-relaxed font-medium">
-                  Kết nối trực tiếp với <strong>OpenAI</strong> (GPT-4o, o1, o3-mini), <strong>Google AI Studio</strong> (Gemini 3.8 Flash, 3.7 Flash, Flash Latest...), <strong>Claude</strong> (Claude 3.5 Sonnet/Haiku), <strong>9Router</strong> hoặc các máy chủ AI chuẩn OpenAI như DeepSeek, Groq, OpenRouter, Mistral, Ollama.
+                  {language === 'vi' 
+                    ? 'Kết nối trực tiếp với OpenAI (GPT-4o, o1, o3-mini), Google AI Studio (Gemini 3.8 Flash, 3.7 Flash, Flash Latest...), Claude (Claude 3.5 Sonnet/Haiku), 9Router hoặc các máy chủ AI chuẩn OpenAI như DeepSeek, Groq, OpenRouter, Mistral, Ollama.'
+                    : 'Connect directly with OpenAI (GPT-4o, o1, o3-mini), Google AI Studio (Gemini 3.8 Flash, 3.7 Flash, Flash Latest...), Claude (Claude 3.5 Sonnet/Haiku), 9Router, or OpenAI-compatible gateways such as DeepSeek, Groq, OpenRouter, Mistral, Ollama.'}
                 </p>
               </div>
 
@@ -152,10 +186,16 @@ export const HelpModal: React.FC<HelpModalProps> = ({
               <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50 space-y-1.5">
                 <span className="font-bold text-xs sm:text-sm text-neutral-900 flex items-center gap-1.5">
                   <BarChart3 className="w-4 h-4 text-neutral-600" />
-                  <span>Bảng thống kê Token & Chi phí các tháng gần nhất</span>
+                  <span>
+                    {language === 'vi' 
+                      ? 'Bảng thống kê Token & Chi phí các tháng gần nhất' 
+                      : 'Token Analytics & Monthly Cost Tracking'}
+                  </span>
                 </span>
                 <p className="text-neutral-600 leading-relaxed font-medium">
-                  Hệ thống tự động lưu trữ và cho phép xem biểu đồ chi tiết từng ngày của các tháng gần nhất hoặc so sánh tổng thể 6 tháng gần nhất mà không cần bấm nút lưu thủ công.
+                  {language === 'vi' 
+                    ? 'Hệ thống tự động lưu trữ và cho phép xem biểu đồ chi tiết từng ngày của các tháng gần nhất hoặc so sánh tổng thể 6 tháng gần nhất mà không cần bấm nút lưu thủ công.'
+                    : 'Automatically tracks token consumption, message counts, and estimated costs with daily breakdowns and comprehensive 6-month comparisons.'}
                 </p>
               </div>
 
@@ -163,10 +203,16 @@ export const HelpModal: React.FC<HelpModalProps> = ({
               <div className="p-3.5 rounded-xl border border-neutral-200 bg-neutral-50 space-y-1.5">
                 <span className="font-bold text-xs sm:text-sm text-neutral-900 flex items-center gap-1.5">
                   <ShieldCheck className="w-4 h-4 text-neutral-600" />
-                  <span>Bảo mật cục bộ (Local Storage)</span>
+                  <span>
+                    {language === 'vi' 
+                      ? 'Bảo mật cục bộ (Local Storage)' 
+                      : 'Local Privacy & Storage'}
+                  </span>
                 </span>
                 <p className="text-neutral-600 leading-relaxed font-medium">
-                  Khóa API, địa chỉ URL và lịch sử đàm thoại được lưu trữ an toàn trên thiết bị trình duyệt của bạn.
+                  {language === 'vi' 
+                    ? 'Khóa API, địa chỉ URL và lịch sử đàm thoại được lưu trữ an toàn trên thiết bị trình duyệt và cơ sở dữ liệu SQLite của bạn.'
+                    : 'API keys, custom endpoints, and conversations are safely stored in your browser\'s local storage and SQLite database.'}
                 </p>
               </div>
             </div>
