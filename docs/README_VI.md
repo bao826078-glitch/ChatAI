@@ -80,7 +80,7 @@
 - **npm** / **bun** / **yarn** / **pnpm**.
 
 ### 1. Chạy trực tiếp bằng CLI (Không cần clone repo)
-Sẽ được phát triển trong tương lai !!!
+Cảnh báo:Hiện tại phương thức cài npm này chưa được hỗ trợ.Tôi sẽ hỗ trợ chúng trong tương lai!!
 ---
 
 ### 2. Phát triển từ mã nguồn (Development)
