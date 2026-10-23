@@ -88,7 +88,7 @@ An alternative global installation:
 npm install -g @bao826078/chatai
 chatai --port 8088
 ```
-
+Warning: This npm installation method is not currently supported. I will add support for it in the future!!
 ---
 
 ### 2. Development Mode (Clone & Run)
