@@ -1,5 +1,4 @@
-
-name: Build ChatAI Docker images
+name: Build and Push ChatAI Docker images
 
 on:
   workflow_dispatch:
@@ -11,14 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  build-and-push:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        platform:
-          - amd64
-          - arm64
 
     steps:
       - name: Checkout
@@ -30,19 +23,20 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
-      - name: Build image and export
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push multi-platform image
         uses: docker/build-push-action@v7
         with:
           context: .
-          platforms: linux/${{ matrix.platform }}
-          outputs: type=docker,dest=/tmp/chatai-${{ matrix.platform }}.tar
-
-      - name: Compress image
-        run: gzip /tmp/chatai-${{ matrix.platform }}.tar
-
-      - name: Upload image artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: chatai-${{ matrix.platform }}
-          path: /tmp/chatai-${{ matrix.platform }}.tar.gz
-          retention-days: 7
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            bao826078/chatai:latest
+            bao826078/chatai:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
