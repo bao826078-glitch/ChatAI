@@ -33,7 +33,6 @@
   <a href="#-quick-setup">Quick Setup</a> •
   <a href="#-docker--docker-compose">Docker</a> •
   <a href="#-ai-providers">AI Providers</a> •
-  <a href="#-project-structure">Structure</a> •
   <a href="#-environmental-variables">Configuration</a> •
   <a href="#-license">License</a>
 </p>
@@ -207,44 +206,6 @@ GEMINI_API_KEY=
 
 ---
 
-## 📁 Project Structure
-
-```
-ChatAI/
-├── .github/
-│   └── workflows/
-│       └── docker-image.yml   # Auto-builds multi-platform Docker images (amd64, arm64)
-├── bin/
-│   └── cli.cjs                # CLI entry point for running npx/npm distributions
-├── server/
-│   └── db.ts                  # SQLite database management (conversations, messages, token usage)
-├── src/
-│   ├── components/
-│   │   ├── AnalyticsModal.tsx # Token & cost analytics dashboard (Recharts)
-│   │   ├── ApiKeyModal.tsx    # API key and provider gateway configuration
-│   │   ├── ChatInput.tsx      # Input toolbar with voice-to-text support
-│   │   ├── ChatMessage.tsx    # Chat bubble, TTS playback, copy actions
-│   │   ├── Header.tsx         # Top navigation bar
-│   │   ├── HelpModal.tsx      # Help text and keyboard shortcuts guide
-│   │   ├── MarkdownView.tsx   # Render Markdown with syntax highlighting
-│   │   └── Sidebar.tsx        # Conversation list, temperature and system prompt settings
-│   ├── utils/
-│   │   ├── analytics.ts       # Token analytics calculation logic (daily/monthly)
-│   │   └── tokenEstimator.ts  # Multi-language token estimation utility
-│   ├── App.tsx                # Main application interface + Chat state management
-│   ├── index.css              # Theme overrides and Tailwind CSS configuration
-│   ├── main.tsx               # React 19 application entry point
-│   └── types.ts               # Shared TypeScript type definitions
-├── Dockerfile                 # Optimized multi-stage build with Alpine Linux
-├── Docker-Compose-example.yaml# Production deployment configuration snippet
-├── package.json               # Dependency declarations and script configuration
-├── server.ts                  # Express backend with SSE streaming and multi-provider proxy
-├── tsconfig.json              # TypeScript compiler configuration
-└── vite.config.ts             # Vite build and bundling configuration
-```
-
----
-
 ## 🛠️ Technology Stack
 
 - **Frontend**: [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Vite](https://vite.dev/), [Tailwind CSS v4](https://tailwindcss.com/), [Framer Motion](https://motion.dev/), [Lucide React](https://lucide.dev/).
@@ -258,6 +219,16 @@ ChatAI/
 ## 📜 License
 
 This project is released under the **Apache License 2.0**. See [LICENSE](LICENSE) for details.
+
+### Software Licensing Notice
+
+Starting from this version, the software is managed through a License Key-based licensing system.
+
+If you need a License Key, please contact:
+
+📧 **admin@afovr.blog**
+
+The License Key system is an additional software licensing and distribution mechanism. It does not modify the rights granted by the Apache License 2.0 for code distributed under that license. See the `LICENSE` file for the applicable license terms.
 
 <div align="center">
   <sub>Built with ❤️ by <a href="https://github.com/bao826078-glitch">bao826078</a></sub>
