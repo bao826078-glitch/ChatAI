@@ -4,9 +4,20 @@ services:
     container_name: chatai
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "8088:8088"
     environment:
       NODE_ENV: production
-    # Add persistent storage here if required by your application.
-    # volumes:
-    #   - ./data:/app/data
+      PORT: 8088
+      DB_PATH: /data/chatai.db
+      KEYGATE_BASE_URL: https://chatai.xface.blog
+      # KEYGATE_PRODUCT_ID:
+      # KEYGATE_API_SECRET:
+      # LICENSE_VALIDATION_INTERVAL: 3600
+      # LICENSE_CACHE_TTL: 86400
+      # FREE_DAILY_CHAT_LIMIT: 20
+      # FREE_DAILY_TOKEN_LIMIT: 50000
+    volumes:
+      - chatai_data:/data
+
+volumes:
+  chatai_data:

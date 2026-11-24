@@ -12,7 +12,8 @@
     "start": "node dist/server.js",
     "preview": "vite preview",
     "clean": "rimraf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx tests/security-license.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

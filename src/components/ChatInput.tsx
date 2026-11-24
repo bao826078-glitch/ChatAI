@@ -1,13 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  ArrowUp, 
-  Square, 
-  Mic, 
-  AlertCircle,
-  Coins
-} from 'lucide-react';
+import { ArrowUp, Square, Mic, AlertCircle, Coins, KeyRound } from 'lucide-react';
 import { estimateTokens, formatTokenCount } from '../utils/tokenEstimator';
-import { AppLanguage } from '../types';
+import { AppLanguage, QuotaInfo } from '../types';
 import { translations } from '../utils/i18n';
 
 interface ChatInputProps {
@@ -15,10 +9,11 @@ interface ChatInputProps {
   isStreaming: boolean;
   onStopStreaming: () => void;
   disabled?: boolean;
-  onOpenApiKeyModal: () => void;
-  hasApiKey: boolean;
-  isKeyInvalid?: boolean;
-  language?: AppLanguage;
+  onOpenSettings: (tab?: 'providers' | 'models' | 'language' | 'general' | 'license') => void;
+  hasReadyProvider: boolean;
+  language: AppLanguage;
+  quota: QuotaInfo;
+  sendOnEnter?: boolean;
 }
 
 export const ChatInput: React.FC<ChatInputProps> = ({
@@ -26,10 +21,11 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   isStreaming,
   onStopStreaming,
   disabled,
-  onOpenApiKeyModal,
-  hasApiKey,
-  isKeyInvalid,
-  language = 'en',
+  onOpenSettings,
+  hasReadyProvider,
+  language,
+  quota,
+  sendOnEnter = true,
 }) => {
   const t = translations[language] || translations.en;
   const [text, setText] = useState('');
@@ -37,7 +33,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
 
-  // Auto-resize textarea
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -45,12 +40,9 @@ export const ChatInput: React.FC<ChatInputProps> = ({
     }
   }, [text]);
 
-  // Web Speech recognition (Vietnamese voice to text)
   const toggleSpeechRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      return;
-    }
+    if (!SpeechRecognition) return;
 
     if (isRecording) {
       recognitionRef.current?.stop();
@@ -63,7 +55,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
       recognition.lang = language === 'vi' ? 'vi-VN' : 'en-US';
       recognition.continuous = true;
       recognition.interimResults = true;
-
       recognition.onstart = () => setIsRecording(true);
       recognition.onend = () => setIsRecording(false);
       recognition.onerror = () => setIsRecording(false);
@@ -80,15 +71,21 @@ export const ChatInput: React.FC<ChatInputProps> = ({
 
       recognitionRef.current = recognition;
       recognition.start();
-    } catch (e) {
+    } catch {
       setIsRecording(false);
     }
   };
 
   const handleSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (isKeyInvalid || !hasApiKey) {
-      onOpenApiKeyModal();
+
+    if (quota.limitReached) {
+      onOpenSettings('license');
+      return;
+    }
+
+    if (!hasReadyProvider) {
+      onOpenSettings('providers');
       return;
     }
 
@@ -108,92 +105,110 @@ export const ChatInput: React.FC<ChatInputProps> = ({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (sendOnEnter && e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit();
     }
   };
 
-  // Real-time estimated token count
   const estimatedInputTokens = estimateTokens(text);
 
   return (
     <div className="w-full max-w-3xl mx-auto px-3 sm:px-4 pb-3 pt-1">
-      {/* Warning banner when key is invalid */}
-      {isKeyInvalid && (
-        <div 
-          onClick={onOpenApiKeyModal}
-          className="mb-2 p-2.5 rounded-xl bg-red-50 border border-red-300 text-red-700 text-xs flex items-center justify-between cursor-pointer hover:opacity-90 transition-opacity shadow-xs"
-        >
-          <div className="flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-red-500" />
-            <span className="font-medium">
-              Khóa API không hợp lệ hoặc đã hết hạn. Đã tạm dừng kết nối với AI.
-            </span>
+      {/* Quota Limit Reached Alert */}
+      {quota.limitReached && (
+        <div className="mb-2 p-2.5 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-300 dark:border-red-500/40 text-red-700 dark:text-red-300 text-xs flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span className="font-medium truncate">{t.limitReachedBanner}</span>
           </div>
-          <span className="underline font-semibold shrink-0">Cập nhật ngay</span>
+          <button
+            type="button"
+            onClick={() => onOpenSettings('license')}
+            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-red-600 text-white text-xs font-semibold shrink-0 cursor-pointer whitespace-nowrap"
+          >
+            <KeyRound className="w-3 h-3" />
+            <span>{t.upgradeCommunityBtn}</span>
+          </button>
         </div>
       )}
 
-      {/* Input box */}
-      <div className={`relative rounded-2xl bg-white border transition-all shadow-xs ${
-        isKeyInvalid
-          ? 'border-red-400 ring-1 ring-red-400/20'
-          : 'border-neutral-300 focus-within:border-neutral-500 focus-within:ring-1 focus-within:ring-neutral-400/30'
-      }`}>
+      {/* Near Quota Limit Warning */}
+      {!quota.limitReached && quota.nearLimit && (
+        <div className="mb-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-950/25 border border-amber-300 dark:border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span className="truncate">
+              {t.nearLimitBanner} ({quota.chatRemaining} {t.quotaRemainingShort})
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => onOpenSettings('license')}
+            className="underline font-semibold shrink-0 cursor-pointer whitespace-nowrap"
+          >
+            {t.upgradeCommunityBtn}
+          </button>
+        </div>
+      )}
+
+      {/* Input Box */}
+      <div
+        className={`relative rounded-2xl bg-white dark:bg-[#131317] border transition-colors ${
+          quota.limitReached
+            ? 'border-red-400/70 dark:border-red-500/50'
+            : 'border-neutral-300 dark:border-neutral-800 focus-within:border-neutral-500 dark:focus-within:border-neutral-600'
+        }`}
+      >
         <textarea
           ref={textareaRef}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={
-            isKeyInvalid
-              ? (language === 'en' ? 'Invalid API Key. Click here to configure...' : 'Khóa API không hợp lệ. Vui lòng bấm vào đây để cập nhật...')
-              : !hasApiKey
-              ? (language === 'en' ? 'Please enter API Key to load models and chat... (Click to set up)' : 'Vui lòng nhập API Key để tải mô hình và trò chuyện... (Bấm để cài đặt)')
+            quota.limitReached
+              ? t.inputPlaceholderQuotaReached
+              : !hasReadyProvider
+              ? t.inputPlaceholderNoProvider
               : t.inputPlaceholder
           }
           rows={1}
-          disabled={disabled}
+          disabled={disabled || quota.limitReached}
           onClick={() => {
-            if (isKeyInvalid || !hasApiKey) onOpenApiKeyModal();
+            if (!hasReadyProvider) onOpenSettings('providers');
           }}
-          className="w-full py-3 pl-3.5 pr-20 bg-transparent text-sm text-neutral-900 placeholder-neutral-400 focus:outline-none resize-none max-h-40 leading-relaxed disabled:opacity-60"
+          className="w-full py-3 pl-3.5 pr-16 bg-transparent text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none resize-none max-h-40 leading-relaxed disabled:opacity-60"
         />
 
-        {/* Action Row */}
         <div className="flex items-center justify-between px-2.5 pb-2 pt-0">
           <div className="flex items-center gap-1">
-            {/* Voice Input */}
             <button
               type="button"
               onClick={toggleSpeechRecognition}
               className={`p-1.5 rounded-lg transition-colors cursor-pointer ${
                 isRecording
                   ? 'bg-red-500 text-white animate-pulse'
-                  : 'text-neutral-500 hover:text-neutral-900 hover:bg-neutral-100'
+                  : 'text-neutral-500 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-100 dark:hover:bg-neutral-800'
               }`}
-              title={isRecording ? (language === 'en' ? 'Listening... Click to stop' : 'Đang lắng nghe... Bấm để dừng') : t.voiceInput}
+              title={isRecording ? t.voiceListening : t.voiceInput}
             >
               <Mic className="w-4 h-4" />
             </button>
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Live estimated tokens */}
             {estimatedInputTokens > 0 && (
-              <span className="text-[11px] font-mono text-neutral-400 flex items-center gap-1">
-                <Coins className="w-3 h-3 text-neutral-400" />
+              <span className="text-[11px] font-mono tabular-nums text-neutral-400 flex items-center gap-1">
+                <Coins className="w-3 h-3" />
                 ~{formatTokenCount(estimatedInputTokens)} {t.tokensCount}
               </span>
             )}
 
-            {/* Send / Stop button */}
             {isStreaming ? (
               <button
                 type="button"
                 onClick={onStopStreaming}
-                className="p-2 rounded-xl bg-neutral-900 text-white hover:bg-neutral-800 transition-colors cursor-pointer shadow-xs"
+                className="p-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 hover:bg-neutral-800 dark:hover:bg-neutral-200 transition-colors cursor-pointer"
                 title={t.stopTooltip}
               >
                 <Square className="w-4 h-4 fill-current" />
@@ -202,8 +217,8 @@ export const ChatInput: React.FC<ChatInputProps> = ({
               <button
                 type="button"
                 onClick={() => handleSubmit()}
-                disabled={!text.trim() || disabled}
-                className="p-2 rounded-xl bg-neutral-900 text-white hover:bg-neutral-800 disabled:opacity-30 disabled:hover:bg-neutral-900 transition-colors cursor-pointer shadow-xs disabled:cursor-not-allowed"
+                disabled={!text.trim() || disabled || quota.limitReached}
+                className="p-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 hover:bg-neutral-800 dark:hover:bg-neutral-200 disabled:opacity-30 transition-colors cursor-pointer disabled:cursor-not-allowed"
                 title={t.sendTooltip}
               >
                 <ArrowUp className="w-4 h-4" />

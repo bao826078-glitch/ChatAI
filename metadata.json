@@ -1,6 +1,6 @@
 {
   "name": "ChatAI",
-  "description": "Ứng dụng web chat AI thông minh hỗ trợ kết nối API Key đa nhà cung cấp và tùy chỉnh mô hình linh hoạt.",
+  "description": "Unified multi-provider AI workspace supporting multiple models, centralized configuration, and Keygate licensing.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

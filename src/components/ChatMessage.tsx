@@ -1,37 +1,41 @@
 import React, { useState } from 'react';
-import { 
-  Bot, 
-  User, 
-  Copy, 
-  Check, 
-  Volume2, 
-  VolumeX, 
-  RotateCcw, 
+import {
+  Bot,
+  User,
+  Copy,
+  Check,
+  Volume2,
+  VolumeX,
+  RotateCcw,
   AlertTriangle,
-  Key,
+  Settings,
   Clock,
-  Coins
+  Coins,
 } from 'lucide-react';
 import { Message, AppLanguage } from '../types';
 import { MarkdownView } from './MarkdownView';
 import { estimateTokens, formatTokenCount } from '../utils/tokenEstimator';
+import { translations } from '../utils/i18n';
 
 interface ChatMessageProps {
   message: Message;
   isLast?: boolean;
   onRegenerate?: () => void;
   onRetry?: () => void;
-  onOpenApiKeyModal?: () => void;
-  language?: AppLanguage;
+  onOpenSettings?: () => void;
+  language: AppLanguage;
+  compactMode?: boolean;
 }
 
 export const ChatMessage: React.FC<ChatMessageProps> = ({
   message,
   onRegenerate,
   onRetry,
-  onOpenApiKeyModal,
-  language = 'en',
+  onOpenSettings,
+  language,
+  compactMode = false,
 }) => {
+  const t = translations[language] || translations.en;
   const isAI = message.sender === 'ai' || message.role === 'model';
   const [copied, setCopied] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -43,10 +47,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
   };
 
   const toggleSpeech = () => {
-    if (!('speechSynthesis' in window)) {
-      return;
-    }
-
+    if (!('speechSynthesis' in window)) return;
     if (isSpeaking) {
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
@@ -57,7 +58,6 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     utterance.lang = language === 'vi' ? 'vi-VN' : 'en-US';
     utterance.onend = () => setIsSpeaking(false);
     utterance.onerror = () => setIsSpeaking(false);
-
     setIsSpeaking(true);
     window.speechSynthesis.speak(utterance);
   };
@@ -67,122 +67,108 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({
     minute: '2-digit',
   });
 
-  const formattedFullDate = new Date(message.timestamp).toLocaleString();
-
-  // Token count estimation
   const tokenCount = message.estimatedTokens || estimateTokens(message.content);
-
   const handleRetryAction = onRegenerate || onRetry;
 
   return (
     <div
-      className={`py-3.5 px-3 sm:px-6 transition-colors border-b ${
+      className={`${compactMode ? 'py-2.5' : 'py-4'} px-3 sm:px-6 transition-colors border-b ${
         isAI
-          ? 'bg-neutral-50/70 border-neutral-200/80'
+          ? 'bg-neutral-50/80 dark:bg-[#111115] border-neutral-200/80 dark:border-neutral-800/80'
           : 'bg-transparent border-transparent'
       }`}
     >
       <div className="max-w-3xl mx-auto flex gap-3 sm:gap-3.5">
-        {/* Avatar */}
         <div className="shrink-0 pt-0.5">
           {isAI ? (
-            <div className="w-7 h-7 rounded-lg bg-neutral-900 text-white flex items-center justify-center font-bold text-xs shadow-xs">
+            <div className="w-7 h-7 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 flex items-center justify-center text-xs">
               <Bot className="w-3.5 h-3.5" />
             </div>
           ) : (
-            <div className="w-7 h-7 rounded-lg bg-neutral-200 text-neutral-700 flex items-center justify-center text-xs">
+            <div className="w-7 h-7 rounded-lg bg-neutral-200 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 flex items-center justify-center text-xs">
               <User className="w-3.5 h-3.5" />
             </div>
           )}
         </div>
 
-        {/* Message Content */}
         <div className="flex-1 min-w-0 space-y-1.5">
-          {/* Header with Sender, Token Badge, and Timestamp */}
-          <div className="flex items-center justify-between text-xs text-neutral-500">
-            <div className="flex items-center gap-1.5">
-              <span className="font-semibold text-neutral-900">
-                {isAI ? (language === 'vi' ? 'Trợ lý AI' : 'AI Assistant') : (language === 'vi' ? 'Bạn' : 'You')}
+          <div className="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="font-semibold text-neutral-900 dark:text-neutral-100">
+                {isAI ? t.aiAssistantLabel : t.youLabel}
               </span>
               {message.modelUsed && (
-                <span className="text-[10px] px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-600 font-mono">
-                  {message.modelUsed}
+                <span className="text-[11px] font-mono text-neutral-500 dark:text-neutral-400">
+                  · {message.modelUsed}
                 </span>
               )}
               {tokenCount > 0 && (
-                <span 
-                  className="text-[10px] px-1.5 py-0.2 rounded bg-neutral-100 text-neutral-500 font-mono flex items-center gap-0.5"
-                  title={language === 'vi' ? 'Số lượng token ước tính tiêu thụ' : 'Estimated token count'}
-                >
-                  <Coins className="w-2.5 h-2.5 text-neutral-400" />
-                  ~{formatTokenCount(tokenCount)} tokens
+                <span className="text-[11px] font-mono tabular-nums text-neutral-500 dark:text-neutral-400 inline-flex items-center gap-1">
+                  · <Coins className="w-2.5 h-2.5" /> ~{formatTokenCount(tokenCount)} {t.tokensCount}
                 </span>
               )}
             </div>
-            <span
-              className="text-[11px] text-neutral-400 flex items-center gap-1"
-              title={formattedFullDate}
-            >
+            <span className="text-[11px] font-mono tabular-nums flex items-center gap-1 shrink-0">
               <Clock className="w-3 h-3" />
               {formattedTime}
             </span>
           </div>
 
-          {/* Message Content */}
           {message.error ? (
-            <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs space-y-2">
+            <div className="p-3 rounded-xl bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-500/40 text-red-700 dark:text-red-300 text-xs space-y-2">
               <div className="flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 text-red-500 mt-0.5" />
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
                 <div className="space-y-0.5">
-                  <span className="font-semibold block">{language === 'vi' ? 'Thông báo lỗi kết nối' : 'Connection Error'}</span>
-                  <p className="leading-relaxed text-neutral-700">
-                    {message.content}
-                  </p>
+                  <span className="font-semibold block">{t.connectionErrorTitle}</span>
+                  <p className="leading-relaxed text-neutral-700 dark:text-neutral-300">{message.content}</p>
                 </div>
               </div>
 
-              {message.errorType === 'INVALID_OR_EXPIRED_KEY' && onOpenApiKeyModal && (
-                <div className="pt-1">
+              {message.errorType === 'INVALID_OR_EXPIRED_KEY' && onOpenSettings && (
+                <div>
                   <button
-                    onClick={onOpenApiKeyModal}
+                    type="button"
+                    onClick={onOpenSettings}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-medium text-xs transition-colors cursor-pointer"
                   >
-                    <Key className="w-3 h-3" />
-                    <span>{language === 'vi' ? 'Mở cài đặt để cập nhật API Key' : 'Open settings to update API Key'}</span>
+                    <Settings className="w-3 h-3" />
+                    <span>{t.openSettingsUpdateKey}</span>
                   </button>
                 </div>
               )}
             </div>
           ) : (
-            <div className="prose max-w-none text-neutral-800 text-sm leading-relaxed">
-              <MarkdownView content={message.content} isStreaming={message.isStreaming} />
+            <div className="prose max-w-none text-neutral-800 dark:text-neutral-200 text-sm leading-relaxed">
+              <MarkdownView content={message.content} isStreaming={message.isStreaming} language={language} />
             </div>
           )}
 
-          {/* Action Toolbar for AI responses */}
           {isAI && !message.error && !message.isStreaming && (
             <div className="flex items-center gap-1 pt-1 opacity-80 hover:opacity-100 transition-opacity">
               <button
+                type="button"
                 onClick={handleCopy}
-                className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
-                title={copied ? (language === 'vi' ? 'Đã sao chép!' : 'Copied!') : (language === 'vi' ? 'Sao chép nội dung' : 'Copy message')}
+                className="p-1 rounded text-neutral-400 hover:text-neutral-700 dark:hover:text-white hover:bg-neutral-200/70 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                title={copied ? t.copiedMessage : t.copyMessage}
               >
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
               </button>
 
               <button
+                type="button"
                 onClick={toggleSpeech}
-                className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
-                title={isSpeaking ? (language === 'vi' ? 'Dừng đọc văn bản' : 'Stop speaking') : (language === 'vi' ? 'Đọc phản hồi bằng giọng nói' : 'Read aloud')}
+                className="p-1 rounded text-neutral-400 hover:text-neutral-700 dark:hover:text-white hover:bg-neutral-200/70 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                title={isSpeaking ? t.stopSpeaking : t.readAloud}
               >
-                {isSpeaking ? <VolumeX className="w-3.5 h-3.5 text-blue-600" /> : <Volume2 className="w-3.5 h-3.5" />}
+                {isSpeaking ? <VolumeX className="w-3.5 h-3.5 text-indigo-400" /> : <Volume2 className="w-3.5 h-3.5" />}
               </button>
 
               {handleRetryAction && (
                 <button
+                  type="button"
                   onClick={handleRetryAction}
-                  className="p-1 rounded text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
-                  title={language === 'vi' ? 'Thử tạo lại câu trả lời' : 'Regenerate response'}
+                  className="p-1 rounded text-neutral-400 hover:text-neutral-700 dark:hover:text-white hover:bg-neutral-200/70 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
+                  title={t.regenerate}
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                 </button>

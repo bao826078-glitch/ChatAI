@@ -43,8 +43,9 @@ COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server.js ./server.js
 
-RUN mkdir -p /data \
-    && chown node:node /data
+RUN mkdir -p /data/secrets \
+    && chown -R node:node /data \
+    && chmod 700 /data/secrets
 
 USER node
 

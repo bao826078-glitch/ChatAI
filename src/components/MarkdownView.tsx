@@ -1,13 +1,21 @@
 import React, { useState, useMemo } from 'react';
 import { marked } from 'marked';
 import { Check, Copy } from 'lucide-react';
+import { AppLanguage } from '../types';
+import { translations } from '../utils/i18n';
 
 interface MarkdownViewProps {
   content: string;
   isStreaming?: boolean;
+  language?: AppLanguage;
 }
 
-export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, isStreaming }) => {
+export const MarkdownView: React.FC<MarkdownViewProps> = ({
+  content,
+  isStreaming,
+  language = 'en',
+}) => {
+  const t = translations[language] || translations.en;
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   const handleCopyCode = (codeText: string, btnId: string) => {
@@ -52,7 +60,7 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, isStreaming
   if (parts.length === 0) {
     return (
       <div className="relative text-xs text-neutral-400">
-        <span>Đang chờ phản hồi...</span>
+        <span>{t.waitingResponse}</span>
         {isStreaming && <span className="inline-block w-1.5 h-3 ml-1 bg-neutral-900 dark:bg-neutral-100 animate-pulse align-middle" />}
       </div>
     );
@@ -76,17 +84,17 @@ export const MarkdownView: React.FC<MarkdownViewProps> = ({ content, isStreaming
                   type="button"
                   onClick={() => part.id && handleCopyCode(part.content, part.id)}
                   className="flex items-center gap-1 px-2 py-0.5 rounded bg-white dark:bg-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-700 dark:text-neutral-300 transition-colors text-xs border border-neutral-300 dark:border-neutral-700 cursor-pointer"
-                  title="Sao chép mã"
+                  title={t.copyCode}
                 >
                   {isCopied ? (
                     <>
                       <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400">Đã chép</span>
+                      <span className="text-[11px] text-emerald-600 dark:text-emerald-400">{t.copiedCode}</span>
                     </>
                   ) : (
                     <>
                       <Copy className="w-3 h-3" />
-                      <span className="text-[11px]">Sao chép</span>
+                      <span className="text-[11px]">{t.copyCode}</span>
                     </>
                   )}
                 </button>

@@ -1,151 +1,192 @@
-import React, { useState, useMemo } from 'react';
-import { 
-  X, 
-  BarChart3, 
-  Coins, 
-  MessageSquare, 
-  DollarSign, 
-  TrendingUp, 
-  Info,
+import React, { useState, useMemo, useEffect } from 'react';
+import {
+  X,
+  BarChart3,
+  Coins,
+  MessageSquare,
+  DollarSign,
+  TrendingUp,
   Calendar,
   Layers,
-  CheckCircle2
+  Lock,
+  History,
+  KeyRound,
+  AlertCircle,
+  Loader2,
 } from 'lucide-react';
-import { 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  Tooltip, 
-  ResponsiveContainer, 
-  CartesianGrid, 
-  Legend 
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  CartesianGrid,
+  Legend,
 } from 'recharts';
-import { Conversation, AppLanguage } from '../types';
-import { 
-  calculateMonthlyStats, 
-  getRecentMonthsList, 
-  calculateRecentMonthsSummary,
-  formatMonthLabel 
-} from '../utils/analytics';
+import { AppLanguage, LicenseInfo, TokenUsageRecord } from '../types';
+import { formatMonthLabel, getRecentMonthsList } from '../utils/analytics';
 import { formatTokenCount } from '../utils/tokenEstimator';
-import { translations } from '../utils/i18n';
+import { translations, translateErrorCode } from '../utils/i18n';
+import { apiFetch } from '../utils/api';
 
 interface AnalyticsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  conversations: Conversation[];
-  language?: AppLanguage;
+  language: AppLanguage;
+  license: LicenseInfo;
+  onOpenLicenseSettings: () => void;
 }
 
 export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
   isOpen,
   onClose,
-  conversations,
-  language = 'en',
+  language,
+  license,
+  onOpenLicenseSettings,
 }) => {
   const t = translations[language] || translations.en;
   const recentMonths = useMemo(() => getRecentMonthsList(6, language), [language]);
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>(recentMonths[0]?.key || '');
-  const [viewMode, setViewMode] = useState<'single' | 'compare'>('single');
+  const [viewMode, setViewMode] = useState<'overview' | 'compare' | 'history'>('overview');
   const [activeMetric, setActiveMetric] = useState<'tokens' | 'conversations' | 'both'>('tokens');
 
-  // Fallback stats computed from current sessions
-  const fallbackStats = useMemo(() => {
-    return calculateMonthlyStats(conversations, selectedMonthKey, language);
-  }, [conversations, selectedMonthKey, language]);
-
-  const fallbackSummary = useMemo(() => {
-    return calculateRecentMonthsSummary(conversations, 6, language);
-  }, [conversations, language]);
-
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [dbStats, setDbStats] = useState<any>(null);
-  const [dbSummary, setDbSummary] = useState<any[] | null>(null);
+  const [dbSummary, setDbSummary] = useState<any[]>([]);
 
-  // Fetch true persisted analytics from SQLite backend
-  React.useEffect(() => {
-    if (!isOpen) return;
-    fetch(`/api/analytics/monthly?month=${selectedMonthKey}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.ok) setDbStats(data);
+  // History state
+  const [historyRecords, setHistoryRecords] = useState<TokenUsageRecord[]>([]);
+  const [historyTotalCount, setHistoryTotalCount] = useState(0);
+  const [historyOffset, setHistoryOffset] = useState(0);
+  const [historyProviderFilter, setHistoryProviderFilter] = useState('all');
+  const [historyModelFilter, setHistoryModelFilter] = useState('all');
+  const [historyLoading, setHistoryLoading] = useState(false);
+
+  const hasAccess =
+    license.plan === 'community' &&
+    license.status === 'active' &&
+    license.entitlements.usageAnalytics &&
+    license.entitlements.tokenHistory;
+
+  useEffect(() => {
+    if (!isOpen || !hasAccess) return;
+
+    let cancelled = false;
+    setLoading(true);
+    setErrorMsg(null);
+
+    Promise.all([
+      apiFetch(`/api/analytics/monthly?month=${encodeURIComponent(selectedMonthKey)}`).then((r) => r.json()),
+      apiFetch('/api/analytics/summary?count=6').then((r) => r.json()),
+    ])
+      .then(([monthlyRes, summaryRes]) => {
+        if (cancelled) return;
+        if (!monthlyRes.ok) {
+          setErrorMsg(translateErrorCode(language, monthlyRes.errorCode, monthlyRes.error));
+          return;
+        }
+        setDbStats(monthlyRes);
+        if (summaryRes.ok && Array.isArray(summaryRes.summary)) {
+          setDbSummary(summaryRes.summary);
+        }
       })
-      .catch((e) => console.log('Analytics fetch note:', e));
-
-    fetch('/api/analytics/summary')
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.ok && Array.isArray(data.summary)) setDbSummary(data.summary);
+      .catch((err: any) => {
+        if (!cancelled) setErrorMsg(err?.message || 'Failed to load analytics.');
       })
-      .catch((e) => console.log('Summary fetch note:', e));
-  }, [isOpen, selectedMonthKey]);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
-  // Merge stats: prioritize SQLite persisted records if available
-  const stats = useMemo(() => {
-    const formattedMonth = formatMonthLabel(selectedMonthKey, language);
-    if (dbStats && dbStats.totalTokens > 0) {
-      return {
-        ...fallbackStats,
-        ...dbStats,
-        monthLabel: formattedMonth,
-        totalTokens: Math.max(dbStats.totalTokens, fallbackStats.totalTokens),
-        totalMessages: Math.max(dbStats.totalMessages, fallbackStats.totalMessages),
-        totalConversations: Math.max(dbStats.totalConversations, fallbackStats.totalConversations),
-        estimatedCostUsd: Number((Math.max(dbStats.totalTokens, fallbackStats.totalTokens) * 0.00000025).toFixed(4)),
-        estimatedCostVnd: Math.round(Number((Math.max(dbStats.totalTokens, fallbackStats.totalTokens) * 0.00000025).toFixed(4)) * 25400),
-      };
-    }
-    return {
-      ...fallbackStats,
-      monthLabel: formattedMonth,
+    return () => {
+      cancelled = true;
     };
-  }, [dbStats, fallbackStats, selectedMonthKey, language]);
+  }, [isOpen, hasAccess, selectedMonthKey, language]);
+
+  useEffect(() => {
+    if (!isOpen || !hasAccess || viewMode !== 'history') return;
+
+    let cancelled = false;
+    setHistoryLoading(true);
+
+    const params = new URLSearchParams({
+      limit: '20',
+      offset: String(historyOffset),
+      provider: historyProviderFilter,
+      model: historyModelFilter,
+    });
+
+    apiFetch(`/api/analytics/history?${params.toString()}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (cancelled) return;
+        if (data.ok) {
+          setHistoryRecords(data.records || []);
+          setHistoryTotalCount(data.totalCount || 0);
+        } else {
+          setErrorMsg(translateErrorCode(language, data.errorCode, data.error));
+        }
+      })
+      .catch((err: any) => {
+        if (!cancelled) setErrorMsg(err?.message || 'Failed to load history.');
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, hasAccess, viewMode, historyOffset, historyProviderFilter, historyModelFilter, language]);
 
   const multiMonthSummary = useMemo(() => {
-    const raw = (dbSummary && dbSummary.length > 0 && dbSummary.some((s) => s.tokens > 0))
-      ? dbSummary
-      : fallbackSummary;
-
-    return raw.map((item: any) => ({
+    return dbSummary.map((item: any) => ({
       ...item,
       monthLabel: formatMonthLabel(item.monthKey || item.monthLabel, language),
     }));
-  }, [dbSummary, fallbackSummary, language]);
+  }, [dbSummary, language]);
 
   if (!isOpen) return null;
 
-  // Custom Recharts tooltip for single-month view
+  const stats = dbStats || {
+    monthKey: selectedMonthKey,
+    totalTokens: 0,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalRequests: 0,
+    totalConversations: 0,
+    totalMessages: 0,
+    estimatedCostUsd: 0,
+    estimatedCostVnd: 0,
+    dailyData: [],
+    byProvider: {},
+    byModel: {},
+  };
+
+  const formattedMonthLabel = formatMonthLabel(selectedMonthKey, language);
+  const providerKeys = Object.keys(stats.byProvider || {});
+  const modelKeys = Object.keys(stats.byModel || {});
+
   const CustomDailyTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
-        <div className="p-3 rounded-xl bg-white border border-neutral-300 shadow-xl text-xs space-y-1.5 font-sans">
-          <p className="font-bold text-sm text-neutral-900 border-b border-neutral-200 pb-1.5">
-            {language === 'vi' ? 'Ngày' : 'Date'}: {data.displayDate} ({data.date})
+        <div className="p-3 rounded-xl bg-white dark:bg-[#16161b] border border-neutral-300 dark:border-neutral-700 shadow-xl text-xs space-y-1.5">
+          <p className="font-semibold text-neutral-900 dark:text-white border-b border-neutral-200 dark:border-neutral-800 pb-1">
+            {data.displayDate} ({data.date})
           </p>
-          <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
-            <span className="flex items-center gap-1.5">
-              <Coins className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Token tiêu thụ:' : 'Tokens consumed:'}
-            </span>
-            <span className="font-mono font-bold text-neutral-900">
-              {data.tokens.toLocaleString()}
-            </span>
+          <div className="flex items-center justify-between gap-5">
+            <span className="text-neutral-500 dark:text-neutral-400">{t.totalTokensCard}:</span>
+            <span className="font-mono font-semibold tabular-nums">{data.tokens.toLocaleString()}</span>
           </div>
-          <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
-            <span className="flex items-center gap-1.5">
-              <MessageSquare className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Tin nhắn / Lượt:' : 'Interactions:'}
-            </span>
-            <span className="font-mono font-bold text-neutral-900">
-              {data.messages || data.conversations}
-            </span>
+          <div className="flex items-center justify-between gap-5">
+            <span className="text-neutral-500 dark:text-neutral-400">{t.metricConversations}:</span>
+            <span className="font-mono font-semibold tabular-nums">{data.messages}</span>
           </div>
-          <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
-            <span className="flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Ước tính chi phí:' : 'Estimated cost:'}
-            </span>
-            <span className="font-mono font-bold text-neutral-900">
-              ${data.costUsd}
-            </span>
+          <div className="flex items-center justify-between gap-5">
+            <span className="text-neutral-500 dark:text-neutral-400">{t.costCard}:</span>
+            <span className="font-mono font-semibold tabular-nums">${data.costUsd}</span>
           </div>
         </div>
       );
@@ -153,38 +194,25 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
     return null;
   };
 
-  // Custom Recharts tooltip for multi-month comparison
   const CustomMultiMonthTooltip = ({ active, payload }: any) => {
     if (active && payload && payload.length) {
       const data = payload[0].payload;
       return (
-        <div className="p-3 rounded-xl bg-white border border-neutral-300 shadow-xl text-xs space-y-1.5 font-sans">
-          <p className="font-bold text-sm text-neutral-900 border-b border-neutral-200 pb-1.5">
+        <div className="p-3 rounded-xl bg-white dark:bg-[#16161b] border border-neutral-300 dark:border-neutral-700 shadow-xl text-xs space-y-1.5">
+          <p className="font-semibold text-neutral-900 dark:text-white border-b border-neutral-200 dark:border-neutral-800 pb-1">
             {formatMonthLabel(data.monthKey || data.monthLabel, language)}
           </p>
-          <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
-            <span className="flex items-center gap-1.5">
-              <Coins className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Tổng Token:' : 'Total Tokens:'}
-            </span>
-            <span className="font-mono font-bold text-neutral-900">
-              {data.tokens.toLocaleString()}
-            </span>
+          <div className="flex items-center justify-between gap-5">
+            <span className="text-neutral-500 dark:text-neutral-400">{t.totalTokensCard}:</span>
+            <span className="font-mono font-semibold tabular-nums">{data.tokens.toLocaleString()}</span>
           </div>
-          <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
-            <span className="flex items-center gap-1.5">
-              <MessageSquare className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Tin nhắn:' : 'Messages:'}
-            </span>
-            <span className="font-mono font-bold text-neutral-900">
-              {data.messages}
-            </span>
+          <div className="flex items-center justify-between gap-5">
+            <span className="text-neutral-500 dark:text-neutral-400">{t.totalRequestsCard}:</span>
+            <span className="font-mono font-semibold tabular-nums">{data.messages}</span>
           </div>
-          <div className="flex items-center justify-between gap-5 text-neutral-700 font-medium">
-            <span className="flex items-center gap-1.5">
-              <DollarSign className="w-3.5 h-3.5 text-neutral-600" /> {language === 'vi' ? 'Chi phí ước tính:' : 'Estimated cost:'}
-            </span>
-            <span className="font-mono font-bold text-neutral-900">
-              ${data.costUsd} ({data.costVnd.toLocaleString('vi-VN')} đ)
-            </span>
+          <div className="flex items-center justify-between gap-5">
+            <span className="text-neutral-500 dark:text-neutral-400">{t.costCard}:</span>
+            <span className="font-mono font-semibold tabular-nums">${data.costUsd}</span>
           </div>
         </div>
       );
@@ -192,418 +220,501 @@ export const AnalyticsModal: React.FC<AnalyticsModalProps> = ({
     return null;
   };
 
-  const gridColor = '#e5e5e5';
-  const textColor = '#525252';
-  const tokenBarColor = '#171717';
-  const convBarColor = '#737373';
-
-  // Filter daily records for charting
-  const chartData = stats.dailyData;
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-5 bg-black/60 backdrop-blur-xs animate-in fade-in duration-150">
-      <div 
-        className="w-full max-w-4xl bg-white border border-neutral-300 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-neutral-900 max-h-[92vh]"
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-5 bg-black/70 backdrop-blur-xs"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-5xl bg-white dark:bg-[#111114] border border-neutral-200 dark:border-neutral-800 rounded-2xl shadow-2xl overflow-hidden flex flex-col text-neutral-900 dark:text-neutral-100 max-h-[92vh]"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Modal Header */}
-        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-neutral-200 bg-neutral-50 shrink-0">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 sm:px-6 py-4 border-b border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#151519] shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 rounded-xl bg-neutral-900 text-white shadow-xs">
+            <div className="p-2.5 rounded-xl bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-950">
               <BarChart3 className="w-5 h-5" />
             </div>
             <div>
-              <div className="flex items-center gap-2 flex-wrap">
-                <h3 className="font-bold text-base sm:text-lg text-neutral-900">
-                  {t.analyticsModalTitle}
-                </h3>
-                <span className="inline-flex items-center gap-1 text-[11px] px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-medium">
-                  <CheckCircle2 className="w-3 h-3 text-emerald-600" />
-                  {t.analyticsAutoSaved}
-                </span>
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-base sm:text-lg">{t.analyticsModalTitle}</h3>
+                <span className="text-xs text-neutral-500 dark:text-neutral-400">· {t.analyticsAutoSaved}</span>
               </div>
-              <p className="text-xs text-neutral-500 font-medium mt-0.5">
-                {t.analyticsSubtitle}
-              </p>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5">{t.analyticsSubtitle}</p>
             </div>
           </div>
           <button
+            type="button"
             onClick={onClose}
-            className="p-2 rounded-xl text-neutral-400 hover:text-neutral-700 hover:bg-neutral-200 transition-colors cursor-pointer"
+            className="p-2 rounded-xl text-neutral-400 hover:text-neutral-900 dark:hover:text-white hover:bg-neutral-200/70 dark:hover:bg-neutral-800 transition-colors cursor-pointer"
             title={t.closeBtn}
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Modal Body */}
-        <div className="p-5 sm:p-6 space-y-5 overflow-y-auto">
-          {/* Controls Bar: Month Selector & View Mode */}
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 p-3 rounded-xl bg-neutral-50 border border-neutral-200">
-            {/* View Mode Toggle */}
-            <div className="flex items-center gap-1.5 p-1 rounded-lg bg-neutral-200/80 w-fit">
-              <button
-                type="button"
-                onClick={() => setViewMode('single')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                  viewMode === 'single'
-                    ? 'bg-white text-neutral-900 shadow-xs'
-                    : 'text-neutral-600 hover:text-neutral-900'
-                }`}
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                <span>{t.tabSingleMonth}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewMode('compare')}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-all cursor-pointer ${
-                  viewMode === 'compare'
-                    ? 'bg-white text-neutral-900 shadow-xs'
-                    : 'text-neutral-600 hover:text-neutral-900'
-                }`}
-              >
-                <Layers className="w-3.5 h-3.5" />
-                <span>{t.tabCompare}</span>
-              </button>
+        {/* Body */}
+        <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-5">
+          {!hasAccess ? (
+            /* Free Plan Locked State */
+            <div className="py-12 px-4 max-w-lg mx-auto text-center space-y-4">
+              <div className="w-12 h-12 rounded-2xl bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-200 flex items-center justify-center mx-auto">
+                <Lock className="w-6 h-6" />
+              </div>
+              <h4 className="text-lg font-semibold">{t.analyticsLockedTitle}</h4>
+              <p className="text-xs sm:text-sm text-neutral-600 dark:text-neutral-400 leading-relaxed">
+                {t.analyticsLockedDesc}
+              </p>
+              <div className="pt-2 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenLicenseSettings();
+                  }}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs sm:text-sm font-semibold cursor-pointer whitespace-nowrap"
+                >
+                  <KeyRound className="w-4 h-4" />
+                  <span>{t.upgradeCommunityBtn}</span>
+                </button>
+              </div>
             </div>
-
-            {/* Month Selector Pills (active when viewMode === 'single') */}
-            {viewMode === 'single' && (
-              <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
-                <span className="text-xs text-neutral-500 font-semibold shrink-0 mr-1">
-                  {t.selectMonthLabel}
-                </span>
-                {recentMonths.map((m) => {
-                  const isSelected = m.key === selectedMonthKey;
-                  return (
-                    <button
-                      key={m.key}
-                      type="button"
-                      onClick={() => setSelectedMonthKey(m.key)}
-                      className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer border ${
-                        isSelected
-                          ? 'bg-neutral-900 text-white border-neutral-900 shadow-xs font-semibold'
-                          : 'bg-white text-neutral-700 border-neutral-200 hover:bg-neutral-100 hover:border-neutral-300'
-                      }`}
-                    >
-                      {m.label} {m.isCurrent ? t.currentMonthTag : ''}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* VIEW MODE 1: Single Month Detailed Breakdown */}
-          {viewMode === 'single' && (
+          ) : (
             <>
-              {/* Stat Cards Grid */}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {/* Stat 1: Total Tokens */}
-                <div className="p-4 rounded-xl border border-neutral-200 bg-neutral-50 flex flex-col justify-between shadow-xs">
-                  <div className="flex items-center justify-between text-neutral-500 text-xs font-semibold mb-1">
-                    <span>{t.totalTokensCard} ({stats.monthLabel})</span>
-                    <Coins className="w-4 h-4 text-neutral-700" />
-                  </div>
-                  <div className="text-xl sm:text-2xl font-bold font-mono text-neutral-900">
-                    {stats.totalTokens.toLocaleString()}
-                  </div>
-                  <span className="text-xs text-neutral-500 font-medium mt-1">
-                    ~{formatTokenCount(stats.totalTokens)} {t.tokensCount}
-                  </span>
+              {/* Controls Bar */}
+              <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-3 rounded-xl bg-neutral-50 dark:bg-[#151519] border border-neutral-200 dark:border-neutral-800">
+                <div className="flex items-center gap-1 p-1 rounded-lg bg-neutral-200/70 dark:bg-neutral-800/80 w-fit overflow-x-auto">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('overview')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      viewMode === 'overview'
+                        ? 'bg-white dark:bg-[#111114] text-neutral-900 dark:text-white shadow-xs'
+                        : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Calendar className="w-3.5 h-3.5" />
+                    <span>{t.tabOverview}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('compare')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      viewMode === 'compare'
+                        ? 'bg-white dark:bg-[#111114] text-neutral-900 dark:text-white shadow-xs'
+                        : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <Layers className="w-3.5 h-3.5" />
+                    <span>{t.tabCompare}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('history')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap ${
+                      viewMode === 'history'
+                        ? 'bg-white dark:bg-[#111114] text-neutral-900 dark:text-white shadow-xs'
+                        : 'text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white'
+                    }`}
+                  >
+                    <History className="w-3.5 h-3.5" />
+                    <span>{t.tabHistory}</span>
+                  </button>
                 </div>
 
-                {/* Stat 2: Conversations & Messages */}
-                <div className="p-4 rounded-xl border border-neutral-200 bg-neutral-50 flex flex-col justify-between shadow-xs">
-                  <div className="flex items-center justify-between text-neutral-500 text-xs font-semibold mb-1">
-                    <span>{t.interactionsCard}</span>
-                    <MessageSquare className="w-4 h-4 text-neutral-700" />
+                {viewMode === 'overview' && (
+                  <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0">
+                    <span className="text-xs text-neutral-500 dark:text-neutral-400 font-medium shrink-0 mr-1">
+                      {t.selectMonthLabel}
+                    </span>
+                    {recentMonths.map((m) => {
+                      const isSelected = m.key === selectedMonthKey;
+                      return (
+                        <button
+                          key={m.key}
+                          type="button"
+                          onClick={() => setSelectedMonthKey(m.key)}
+                          className={`px-2.5 py-1 rounded-lg text-xs font-medium whitespace-nowrap transition-colors cursor-pointer border ${
+                            isSelected
+                              ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 border-neutral-900 dark:border-white'
+                              : 'bg-white dark:bg-[#0d0d10] text-neutral-700 dark:text-neutral-300 border-neutral-200 dark:border-neutral-800 hover:bg-neutral-100 dark:hover:bg-neutral-800'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      );
+                    })}
                   </div>
-                  <div className="text-xl sm:text-2xl font-bold font-mono text-neutral-900">
-                    {stats.totalMessages || stats.totalConversations}
-                  </div>
-                  <span className="text-xs text-neutral-500 font-medium mt-1">
-                    {stats.totalConversations} {language === 'vi' ? 'cuộc hội thoại' : 'conversations'}
-                  </span>
-                </div>
-
-                {/* Stat 3: Estimated Cost */}
-                <div className="col-span-2 sm:col-span-1 p-4 rounded-xl border border-neutral-200 bg-neutral-50 flex flex-col justify-between shadow-xs">
-                  <div className="flex items-center justify-between text-neutral-500 text-xs font-semibold mb-1">
-                    <span>{t.costCard}</span>
-                    <DollarSign className="w-4 h-4 text-neutral-700" />
-                  </div>
-                  <div className="text-xl sm:text-2xl font-bold font-mono text-neutral-900">
-                    ${stats.estimatedCostUsd}
-                  </div>
-                  <span className="text-xs text-neutral-600 mt-1 font-mono font-medium">
-                    ≈ {stats.estimatedCostVnd.toLocaleString('vi-VN')} đ
-                  </span>
-                </div>
+                )}
               </div>
 
-              {/* Token Source & Breakdown Info */}
-              <div className="flex flex-wrap items-center justify-between gap-2 p-3 rounded-xl bg-neutral-100 border border-neutral-200 text-xs">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <span className="text-neutral-500 font-semibold">{t.tokenAnalysisTitle}</span>
-                  <span className="font-mono text-neutral-800">
-                    {t.tokenInput}: <strong>{(stats.totalInputTokens || 0).toLocaleString()}</strong>
-                  </span>
-                  <span className="font-mono text-neutral-800">
-                    {t.tokenOutput}: <strong>{(stats.totalOutputTokens || 0).toLocaleString()}</strong>
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="px-2 py-0.5 rounded-md bg-neutral-200 text-neutral-800 font-medium text-[11px]">
-                    SQLite: data/chatai.db
-                  </span>
-                  {stats.bySource?.provider > 0 && (
-                    <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-800 font-medium text-[11px]">
-                      Provider: {stats.bySource.provider.toLocaleString()}
-                    </span>
-                  )}
-                  {stats.bySource?.estimated > 0 && (
-                    <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-800 font-medium text-[11px]">
-                      {language === 'vi' ? 'Ước tính' : 'Estimated'}: {stats.bySource.estimated.toLocaleString()}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Provider Breakdown */}
-              {stats.byProvider && Object.keys(stats.byProvider).length > 0 && (
-                <div className="flex items-center gap-2 flex-wrap text-xs">
-                  <span className="text-neutral-500 font-semibold">{t.byProviderTitle}</span>
-                  {Object.entries(stats.byProvider).map(([pName, pData]: any) => (
-                    <span key={pName} className="px-2.5 py-1 rounded-lg bg-neutral-50 border border-neutral-200 font-medium text-neutral-800 shadow-2xs">
-                      <strong className="uppercase">{pName}</strong>: {pData.tokens.toLocaleString()} {t.tokensCount} ({pData.requests} reqs)
-                    </span>
-                  ))}
+              {errorMsg && (
+                <div className="p-3.5 rounded-xl border border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-950/30 text-red-700 dark:text-red-300 text-xs flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{errorMsg}</span>
                 </div>
               )}
 
-              {/* Chart Section */}
-              <div className="space-y-3">
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
-                  <div className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-neutral-900">
-                    <TrendingUp className="w-4 h-4 text-neutral-700" />
-                    <span>{t.tokensChartTitle} {stats.monthLabel}</span>
+              {loading && viewMode !== 'history' ? (
+                <div className="py-16 flex items-center justify-center text-xs text-neutral-500 gap-2">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>{t.loadingText}</span>
+                </div>
+              ) : viewMode === 'overview' ? (
+                <>
+                  {/* 5 KPI Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+                    <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#151519]">
+                      <div className="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400 mb-1">
+                        <span>{t.totalRequestsCard}</span>
+                        <MessageSquare className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="text-lg sm:text-xl font-bold font-mono tabular-nums">
+                        {(stats.totalRequests || stats.totalMessages || 0).toLocaleString()}
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#151519]">
+                      <div className="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400 mb-1">
+                        <span>{t.promptTokensCard}</span>
+                        <Coins className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="text-lg sm:text-xl font-bold font-mono tabular-nums">
+                        {(stats.totalInputTokens || 0).toLocaleString()}
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#151519]">
+                      <div className="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400 mb-1">
+                        <span>{t.completionTokensCard}</span>
+                        <Coins className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="text-lg sm:text-xl font-bold font-mono tabular-nums">
+                        {(stats.totalOutputTokens || 0).toLocaleString()}
+                      </div>
+                    </div>
+
+                    <div className="p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#151519]">
+                      <div className="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400 mb-1">
+                        <span>{t.totalTokensCard}</span>
+                        <Coins className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="text-lg sm:text-xl font-bold font-mono tabular-nums">
+                        {(stats.totalTokens || 0).toLocaleString()}
+                      </div>
+                      <span className="text-[11px] text-neutral-500 font-mono">
+                        ~{formatTokenCount(stats.totalTokens || 0)}
+                      </span>
+                    </div>
+
+                    <div className="col-span-2 sm:col-span-1 p-3.5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#151519]">
+                      <div className="flex items-center justify-between text-xs text-neutral-500 dark:text-neutral-400 mb-1">
+                        <span>{t.costCard}</span>
+                        <DollarSign className="w-3.5 h-3.5" />
+                      </div>
+                      <div className="text-lg sm:text-xl font-bold font-mono tabular-nums">
+                        ${stats.estimatedCostUsd || 0}
+                      </div>
+                      <span className="text-[11px] text-neutral-500 font-mono">
+                        ≈ {(stats.estimatedCostVnd || 0).toLocaleString('vi-VN')} đ
+                      </span>
+                    </div>
                   </div>
 
-                  {/* Metric Filter Tabs */}
-                  <div className="flex items-center p-0.5 rounded-lg bg-neutral-100 border border-neutral-200 text-xs font-semibold">
-                    <button
-                      type="button"
-                      onClick={() => setActiveMetric('tokens')}
-                      className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
-                        activeMetric === 'tokens'
-                          ? 'bg-white text-neutral-900 shadow-xs font-bold'
-                          : 'text-neutral-600 hover:text-neutral-900'
-                      }`}
-                    >
-                      {t.metricTokens}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveMetric('conversations')}
-                      className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
-                        activeMetric === 'conversations'
-                          ? 'bg-white text-neutral-900 shadow-xs font-bold'
-                          : 'text-neutral-600 hover:text-neutral-900'
-                      }`}
-                    >
-                      {t.metricConversations}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setActiveMetric('both')}
-                      className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
-                        activeMetric === 'both'
-                          ? 'bg-white text-neutral-900 shadow-xs font-bold'
-                          : 'text-neutral-600 hover:text-neutral-900'
-                      }`}
-                    >
-                      {t.metricBoth}
-                    </button>
+                  {/* Daily Usage Chart */}
+                  <div className="space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-1.5 text-sm font-semibold">
+                        <TrendingUp className="w-4 h-4" />
+                        <span>
+                          {t.tokensChartTitle} {formattedMonthLabel}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center p-0.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 border border-neutral-200 dark:border-neutral-700 text-xs font-medium">
+                        {(['tokens', 'conversations', 'both'] as const).map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            onClick={() => setActiveMetric(m)}
+                            className={`px-3 py-1 rounded-md transition-colors cursor-pointer ${
+                              activeMetric === m
+                                ? 'bg-white dark:bg-[#111114] text-neutral-900 dark:text-white font-semibold'
+                                : 'text-neutral-600 dark:text-neutral-400'
+                            }`}
+                          >
+                            {m === 'tokens' ? t.metricTokens : m === 'conversations' ? t.metricConversations : t.metricBoth}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="w-full h-64 p-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-[#0d0d10]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={stats.dailyData || []} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#52525b33" vertical={false} />
+                          <XAxis dataKey="displayDate" stroke="#71717a" fontSize={10} tickLine={false} />
+                          <YAxis
+                            stroke="#71717a"
+                            fontSize={10}
+                            tickLine={false}
+                            tickFormatter={(val) => (val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val)}
+                          />
+                          <Tooltip content={<CustomDailyTooltip />} />
+                          <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '6px' }} />
+                          {(activeMetric === 'tokens' || activeMetric === 'both') && (
+                            <Bar dataKey="tokens" name={t.metricTokens} fill="#6366f1" radius={[3, 3, 0, 0]} maxBarSize={24} />
+                          )}
+                          {(activeMetric === 'conversations' || activeMetric === 'both') && (
+                            <Bar dataKey="messages" name={t.metricConversations} fill="#10b981" radius={[3, 3, 0, 0]} maxBarSize={24} />
+                          )}
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  {/* Provider & Model Breakdowns */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2.5 bg-neutral-50 dark:bg-[#151519] border-b border-neutral-200 dark:border-neutral-800 text-xs font-semibold">
+                        {t.byProviderTitle}
+                      </div>
+                      {providerKeys.length === 0 ? (
+                        <div className="p-4 text-xs text-neutral-500">{t.historyEmpty}</div>
+                      ) : (
+                        <div className="divide-y divide-neutral-200 dark:divide-neutral-800 text-xs">
+                          {providerKeys.map((pKey) => {
+                            const row = stats.byProvider[pKey];
+                            return (
+                              <div key={pKey} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                                <span className="font-medium truncate">{pKey}</span>
+                                <span className="font-mono tabular-nums text-neutral-600 dark:text-neutral-300 shrink-0">
+                                  {row.tokens.toLocaleString()} {t.tokensCount} · {row.requests} reqs
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-hidden">
+                      <div className="px-4 py-2.5 bg-neutral-50 dark:bg-[#151519] border-b border-neutral-200 dark:border-neutral-800 text-xs font-semibold">
+                        {t.byModelTitle}
+                      </div>
+                      {modelKeys.length === 0 ? (
+                        <div className="p-4 text-xs text-neutral-500">{t.historyEmpty}</div>
+                      ) : (
+                        <div className="divide-y divide-neutral-200 dark:divide-neutral-800 text-xs max-h-56 overflow-y-auto">
+                          {modelKeys.map((mKey) => {
+                            const row = stats.byModel[mKey];
+                            return (
+                              <div key={mKey} className="px-4 py-2.5 flex items-center justify-between gap-3">
+                                <span className="font-mono truncate">{mKey}</span>
+                                <span className="font-mono tabular-nums text-neutral-600 dark:text-neutral-300 shrink-0">
+                                  {row.tokens.toLocaleString()} {t.tokensCount} · {row.requests} reqs
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
+              ) : viewMode === 'compare' ? (
+                /* 6-Month Comparison */
+                <div className="space-y-5">
+                  <div className="space-y-2">
+                    <h4 className="text-sm font-semibold">{t.multiMonthChartTitle}</h4>
+                    <div className="w-full h-64 p-3 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50/50 dark:bg-[#0d0d10]">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={[...multiMonthSummary].reverse()} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="#52525b33" vertical={false} />
+                          <XAxis dataKey="monthLabel" stroke="#71717a" fontSize={11} tickLine={false} />
+                          <YAxis
+                            stroke="#71717a"
+                            fontSize={11}
+                            tickLine={false}
+                            tickFormatter={(val) => (val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val)}
+                          />
+                          <Tooltip content={<CustomMultiMonthTooltip />} />
+                          <Bar dataKey="tokens" name={t.metricTokens} fill="#6366f1" radius={[4, 4, 0, 0]} maxBarSize={44} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+
+                  <div className="border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-x-auto">
+                    <table className="w-full text-xs text-left">
+                      <thead className="bg-neutral-50 dark:bg-[#151519] text-neutral-600 dark:text-neutral-300 border-b border-neutral-200 dark:border-neutral-800">
+                        <tr>
+                          <th className="px-4 py-2.5">{t.colMonth}</th>
+                          <th className="px-4 py-2.5 text-right">{t.colTokens}</th>
+                          <th className="px-4 py-2.5 text-right">{t.colInteractions}</th>
+                          <th className="px-4 py-2.5 text-right">{t.colCostUsd}</th>
+                          <th className="px-4 py-2.5 text-right">{t.colCostVnd}</th>
+                          <th className="px-4 py-2.5 text-center">{t.colAction}</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                        {multiMonthSummary.map((row) => (
+                          <tr key={row.monthKey} className="hover:bg-neutral-50 dark:hover:bg-[#151519]">
+                            <td className="px-4 py-2.5 font-medium">{row.monthLabel}</td>
+                            <td className="px-4 py-2.5 text-right font-mono tabular-nums">{row.tokens.toLocaleString()}</td>
+                            <td className="px-4 py-2.5 text-right font-mono tabular-nums">
+                              {row.messages} / {row.conversations}
+                            </td>
+                            <td className="px-4 py-2.5 text-right font-mono tabular-nums">${row.costUsd}</td>
+                            <td className="px-4 py-2.5 text-right font-mono tabular-nums">
+                              {row.costVnd.toLocaleString('vi-VN')} đ
+                            </td>
+                            <td className="px-4 py-2.5 text-center">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setSelectedMonthKey(row.monthKey);
+                                  setViewMode('overview');
+                                }}
+                                className="underline cursor-pointer"
+                              >
+                                {t.actionViewDay}
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
                 </div>
+              ) : (
+                /* Token Usage History Table */
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    <select
+                      value={historyProviderFilter}
+                      onChange={(e) => {
+                        setHistoryOffset(0);
+                        setHistoryProviderFilter(e.target.value);
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#0c0c0f] text-xs"
+                    >
+                      <option value="all">{t.historyFilterProvider}</option>
+                      {providerKeys.map((p) => (
+                        <option key={p} value={p}>
+                          {p}
+                        </option>
+                      ))}
+                    </select>
 
-                {/* Recharts BarChart */}
-                <div className="w-full h-64 sm:h-72 min-h-[250px] p-3 rounded-xl border border-neutral-200 bg-neutral-50/50 shadow-inner">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={280} minHeight={240}>
-                    <BarChart data={chartData} margin={{ top: 12, right: 10, left: -10, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-                      <XAxis 
-                        dataKey="displayDate" 
-                        stroke={textColor} 
-                        fontSize={10} 
-                        tickLine={false} 
-                        axisLine={{ stroke: gridColor }}
-                      />
-                      <YAxis 
-                        stroke={textColor} 
-                        fontSize={10} 
-                        tickLine={false} 
-                        axisLine={{ stroke: gridColor }}
-                        tickFormatter={(val) => (val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val)}
-                      />
-                      <Tooltip content={<CustomDailyTooltip />} />
-                      <Legend 
-                        wrapperStyle={{ fontSize: '11px', paddingTop: '8px', fontWeight: 600 }}
-                        formatter={(value) => (value === 'tokens' ? (language === 'vi' ? 'Token tiêu thụ' : 'Tokens consumed') : (language === 'vi' ? 'Số lượt tương tác' : 'Interactions'))}
-                      />
-                      
-                      {(activeMetric === 'tokens' || activeMetric === 'both') && (
-                        <Bar 
-                          dataKey="tokens" 
-                          name="tokens"
-                          fill={tokenBarColor} 
-                          radius={[3, 3, 0, 0]} 
-                          maxBarSize={28}
-                        />
-                      )}
+                    <select
+                      value={historyModelFilter}
+                      onChange={(e) => {
+                        setHistoryOffset(0);
+                        setHistoryModelFilter(e.target.value);
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#0c0c0f] text-xs"
+                    >
+                      <option value="all">{t.historyFilterModel}</option>
+                      {modelKeys.map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
 
-                      {(activeMetric === 'conversations' || activeMetric === 'both') && (
-                        <Bar 
-                          dataKey="messages" 
-                          name="conversations"
-                          fill={convBarColor} 
-                          radius={[3, 3, 0, 0]} 
-                          maxBarSize={28}
-                        />
-                      )}
-                    </BarChart>
-                  </ResponsiveContainer>
+                  {historyLoading ? (
+                    <div className="py-12 flex items-center justify-center text-xs text-neutral-500 gap-2">
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>{t.loadingText}</span>
+                    </div>
+                  ) : historyRecords.length === 0 ? (
+                    <div className="p-8 rounded-xl border border-dashed border-neutral-300 dark:border-neutral-800 text-center text-xs text-neutral-500">
+                      {t.historyEmpty}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="border border-neutral-200 dark:border-neutral-800 rounded-xl overflow-x-auto">
+                        <table className="w-full text-xs text-left">
+                          <thead className="bg-neutral-50 dark:bg-[#151519] text-neutral-600 dark:text-neutral-300 border-b border-neutral-200 dark:border-neutral-800">
+                            <tr>
+                              <th className="px-3 py-2.5">{t.colTime}</th>
+                              <th className="px-3 py-2.5">{t.colConversation}</th>
+                              <th className="px-3 py-2.5">{t.colProvider}</th>
+                              <th className="px-3 py-2.5">{t.colModel}</th>
+                              <th className="px-3 py-2.5 text-right">{t.colPromptTokens}</th>
+                              <th className="px-3 py-2.5 text-right">{t.colCompletionTokens}</th>
+                              <th className="px-3 py-2.5 text-right">{t.colTotalTokens}</th>
+                              <th className="px-3 py-2.5">{t.colSource}</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-neutral-200 dark:divide-neutral-800">
+                            {historyRecords.map((rec) => (
+                              <tr key={rec.id} className="hover:bg-neutral-50 dark:hover:bg-[#151519]">
+                                <td className="px-3 py-2 font-mono tabular-nums whitespace-nowrap text-neutral-500 dark:text-neutral-400">
+                                  {new Date(rec.created_at).toLocaleString()}
+                                </td>
+                                <td className="px-3 py-2 max-w-[180px] truncate">
+                                  {rec.conversation_title || rec.conversation_id || '—'}
+                                </td>
+                                <td className="px-3 py-2 whitespace-nowrap">{rec.provider}</td>
+                                <td className="px-3 py-2 font-mono whitespace-nowrap">{rec.model}</td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums">
+                                  {rec.input_tokens.toLocaleString()}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums">
+                                  {rec.output_tokens.toLocaleString()}
+                                </td>
+                                <td className="px-3 py-2 text-right font-mono tabular-nums font-semibold">
+                                  {rec.total_tokens.toLocaleString()}
+                                </td>
+                                <td className="px-3 py-2 whitespace-nowrap text-neutral-500 dark:text-neutral-400">
+                                  {rec.usage_source === 'provider' ? t.sourceProvider : t.sourceEstimated}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+
+                      <div className="flex items-center justify-between text-xs text-neutral-500">
+                        <span className="font-mono tabular-nums">
+                          {historyOffset + 1}–{Math.min(historyOffset + 20, historyTotalCount)} / {historyTotalCount}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            disabled={historyOffset === 0}
+                            onClick={() => setHistoryOffset(Math.max(0, historyOffset - 20))}
+                            className="px-3 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 disabled:opacity-40 cursor-pointer"
+                          >
+                            {t.prevPage}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={historyOffset + 20 >= historyTotalCount}
+                            onClick={() => setHistoryOffset(historyOffset + 20)}
+                            className="px-3 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 disabled:opacity-40 cursor-pointer"
+                          >
+                            {t.nextPage}
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
-              </div>
+              )}
             </>
           )}
-
-          {/* VIEW MODE 2: Multi-Month Comparison (Last 6 Months) */}
-          {viewMode === 'compare' && (
-            <div className="space-y-5">
-              {/* Comparative Multi-Month Chart */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-1.5 text-xs sm:text-sm font-bold text-neutral-900">
-                  <TrendingUp className="w-4 h-4 text-neutral-700" />
-                  <span>{t.multiMonthChartTitle}</span>
-                </div>
-
-                <div className="w-full h-64 sm:h-72 min-h-[250px] p-3 rounded-xl border border-neutral-200 bg-neutral-50/50 shadow-inner">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={[...multiMonthSummary].reverse()} margin={{ top: 12, right: 15, left: -5, bottom: 0 }}>
-                      <CartesianGrid strokeDasharray="3 3" stroke={gridColor} vertical={false} />
-                      <XAxis 
-                        dataKey="monthLabel" 
-                        stroke={textColor} 
-                        fontSize={11} 
-                        tickLine={false} 
-                        axisLine={{ stroke: gridColor }}
-                      />
-                      <YAxis 
-                        stroke={textColor} 
-                        fontSize={11} 
-                        tickLine={false} 
-                        axisLine={{ stroke: gridColor }}
-                        tickFormatter={(val) => (val >= 1000 ? `${(val / 1000).toFixed(0)}k` : val)}
-                      />
-                      <Tooltip content={<CustomMultiMonthTooltip />} />
-                      <Bar 
-                        dataKey="tokens" 
-                        name={language === 'vi' ? 'Token tiêu thụ' : 'Tokens consumed'}
-                        fill={tokenBarColor} 
-                        radius={[4, 4, 0, 0]} 
-                        maxBarSize={48}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-
-              {/* Multi-Month Breakdown Table */}
-              <div className="space-y-2">
-                <h4 className="text-xs font-bold text-neutral-800">
-                  {t.multiMonthTableTitle}
-                </h4>
-                <div className="border border-neutral-200 rounded-xl overflow-hidden shadow-xs">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-neutral-100 text-neutral-700 font-semibold border-b border-neutral-200">
-                      <tr>
-                        <th className="px-3.5 py-2.5">{t.colMonth}</th>
-                        <th className="px-3.5 py-2.5 text-right">{t.colTokens}</th>
-                        <th className="px-3.5 py-2.5 text-right">{t.colInteractions}</th>
-                        <th className="px-3.5 py-2.5 text-right">{t.colCostUsd}</th>
-                        <th className="px-3.5 py-2.5 text-right">{t.colCostVnd}</th>
-                        <th className="px-3.5 py-2.5 text-center">{t.colAction}</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-neutral-200">
-                      {multiMonthSummary.map((row) => (
-                        <tr 
-                          key={row.monthKey} 
-                          className={`hover:bg-neutral-50 transition-colors ${row.monthKey === selectedMonthKey ? 'bg-neutral-50/80 font-medium' : ''}`}
-                        >
-                          <td className="px-3.5 py-2.5 font-medium text-neutral-900 flex items-center gap-1.5">
-                            <Calendar className="w-3.5 h-3.5 text-neutral-400" />
-                            {row.monthLabel}
-                            {row.monthKey === recentMonths[0]?.key && (
-                              <span className="text-[10px] px-1.5 py-0.2 rounded bg-neutral-200 text-neutral-700 font-normal">
-                                {t.currentMonthTag}
-                              </span>
-                            )}
-                          </td>
-                          <td className="px-3.5 py-2.5 text-right font-mono font-semibold text-neutral-900">
-                            {row.tokens.toLocaleString()}
-                          </td>
-                          <td className="px-3.5 py-2.5 text-right font-mono text-neutral-700">
-                            {row.conversations} / {row.messages}
-                          </td>
-                          <td className="px-3.5 py-2.5 text-right font-mono text-neutral-900">
-                            ${row.costUsd}
-                          </td>
-                          <td className="px-3.5 py-2.5 text-right font-mono text-neutral-700">
-                            {row.costVnd.toLocaleString('vi-VN')} đ
-                          </td>
-                          <td className="px-3.5 py-2.5 text-center">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedMonthKey(row.monthKey);
-                                setViewMode('single');
-                              }}
-                              className="px-2 py-1 rounded text-[11px] font-medium text-neutral-800 hover:bg-neutral-200 transition-colors underline cursor-pointer"
-                            >
-                              {t.actionViewDay}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Pricing & Auto-Save Note */}
-          <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-neutral-100 border border-neutral-200 text-xs text-neutral-600 font-medium">
-            <Info className="w-4 h-4 shrink-0 mt-0.5 text-neutral-500" />
-            <div className="leading-relaxed">
-              <strong className="text-neutral-900">{language === 'vi' ? 'Cơ chế lưu trữ SQLite & định mức:' : 'SQLite Persistence & Rates:'}</strong> {language === 'vi' ? 'Toàn bộ dữ liệu token theo ngày và tháng được lưu trữ bền vững trong cơ sở dữ liệu SQLite data/chatai.db. Chi phí ước tính chuẩn ~$0.25 cho mỗi 1.000.000 tokens.' : 'All token usage metrics by day and month are securely stored in the SQLite database at data/chatai.db. Estimated cost standard is ~$0.25 per 1,000,000 tokens.'}
-            </div>
-          </div>
         </div>
 
-        {/* Modal Footer */}
-        <div className="flex items-center justify-between px-6 py-4 border-t border-neutral-200 bg-neutral-50 shrink-0">
-          <span className="text-xs text-neutral-500">
-            {language === 'vi' ? 'Dữ liệu được cập nhật tức thời theo các cuộc trò chuyện' : 'Real-time metrics synced with chat conversations'}
-          </span>
+        {/* Footer */}
+        <div className="flex items-center justify-end px-6 py-3.5 border-t border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#151519] shrink-0">
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs sm:text-sm font-bold transition-colors cursor-pointer shadow-xs"
+            className="px-5 py-2 rounded-xl bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs sm:text-sm font-semibold cursor-pointer"
           >
             {t.closeBtn}
           </button>
