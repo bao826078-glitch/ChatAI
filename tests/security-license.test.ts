@@ -17,7 +17,6 @@ function runWorker(action: string, dbPath: string, extraArgs: string[] = []): st
     env: {
       ...process.env,
       DB_PATH: dbPath,
-      KEYGATE_BASE_URL: 'https://chatai.xface.blog',
     },
     encoding: 'utf-8',
   });
@@ -82,12 +81,12 @@ async function runAllTests() {
   const masterKeyPath = path.join(secretsDir, 'master.key');
 
   process.env.DB_PATH = dbPath;
-  process.env.KEYGATE_BASE_URL = 'https://chatai.xface.blog';
 
   try {
     const { dbManager } = await import('../server/db.ts');
     const { getMasterKeyManager, MasterKeyManager } = await import('../server/crypto.ts');
     const { licenseService } = await import('../server/keygate.ts');
+    const { quotaService } = await import('../server/quota.ts');
 
     await dbManager.init();
 
@@ -233,12 +232,120 @@ async function runAllTests() {
       assert.equal(JSON.stringify(actRes.license).includes(TEST_ACTIVATION_TOKEN), false, 'Frontend license payload must not expose activation token');
       assert.equal(JSON.stringify(actRes.license).includes('https://keygate.app'), false, 'meta.url must be ignored');
 
-      // Test 12c: Verify license
+      // Test 12c: Verify license & 10000 daily quota limit
       const verRes = await licenseService.verifyLicense();
       assert.equal(verRes.ok, true);
       assert.equal(verRes.license.plan, 'community');
       assert.equal(keygateVerifyCalledUrl, 'https://chatai.xface.blog/api/v1/license/verify');
+      const commQuota = quotaService.getQuotaStatus(verRes.license);
+      assert.equal(commQuota.chatLimit, 10000, 'Community daily chat limit must be 10000');
       console.log('PASS [12/12] Keygate Activate ("status":"activated", ignores meta.url) & Verify pass strict HTTPS/hostname checks');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+
+    // Test Deactivate License (tolerates 404 on /deactivate) & Free quota 10000
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ success: false, error: { code: 'NOT_FOUND' } }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+    try {
+      const deactRes = await licenseService.deactivateLicense();
+      assert.equal(deactRes.ok, true);
+      assert.equal(deactRes.license.plan, 'free');
+      assert.equal(deactRes.license.status, 'not_activated');
+      const freeQuota = quotaService.getQuotaStatus(deactRes.license);
+      assert.equal(freeQuota.chatLimit, 2000, 'Free daily chat limit must be 2000');
+      assert.equal(dbManager.getDecryptedLicenseKey(), '');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+
+    // Regression test: Verify License after Deactivate must NOT re-activate Community plan
+    globalThis.fetch = (async (input: any) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://chatai.xface.blog/api/v1/license/verify') {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: { status: 'active', plan_name: 'Community', product_name: 'ChatAI' },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      throw new Error(`Unexpected URL during post-deactivate verify test: ${url}`);
+    }) as typeof fetch;
+    try {
+      const postDeactVer = await licenseService.verifyLicense(TEST_LICENSE_KEY);
+      assert.equal(postDeactVer.ok, true);
+      assert.equal(postDeactVer.activated, false, 'Verify after deactivate must NOT activate license');
+      assert.equal(postDeactVer.license.plan, 'free');
+      assert.equal(postDeactVer.license.status, 'not_activated');
+      assert.equal(dbManager.getDecryptedLicenseKey(), '');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+
+    // Regression test: valid:false must be rejected & ACTIVATION_NOT_FOUND maps to LICENSE_NOT_ACTIVATED
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ success: true, data: { valid: false } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })) as typeof fetch;
+    try {
+      const falseValidRes = await licenseService.verifyLicense(TEST_LICENSE_KEY);
+      assert.equal(falseValidRes.ok, false, 'Response with data.valid=false must be rejected');
+      assert.equal(falseValidRes.activated, false);
+      assert.equal(falseValidRes.errorCode, 'LICENSE_INVALID');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify({
+          success: false,
+          error: { code: 'ACTIVATION_NOT_FOUND', message: 'Not activated on this device' },
+        }),
+        { status: 404, headers: { 'Content-Type': 'application/json' } }
+      )) as typeof fetch;
+    try {
+      const notActRes = await licenseService.activateLicense(TEST_LICENSE_KEY);
+      assert.equal(notActRes.ok, false);
+      assert.equal(notActRes.errorCode, 'LICENSE_NOT_ACTIVATED');
+      assert.equal(notActRes.license.status, 'not_activated', 'Failed activation on Free must not leave sticky invalid status');
+
+      const notActVer = await licenseService.verifyLicense(TEST_LICENSE_KEY);
+      assert.equal(notActVer.ok, true);
+      assert.equal(notActVer.activated, false);
+      assert.equal(notActVer.verifiedInfo?.status, 'not_activated');
+    } finally {
+      globalThis.fetch = origFetch;
+    }
+
+    // Re-activate via activateLicense for subsequent key rotation test (Test 11)
+    globalThis.fetch = (async (input: any) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url === 'https://chatai.xface.blog/api/v1/license/activate') {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              status: 'activated',
+              license_id: '9bce0e5a-2606-4648-894d-3cef3298952d',
+              token: TEST_ACTIVATION_TOKEN,
+            },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      throw new Error(`Unexpected URL during re-activate: ${url}`);
+    }) as typeof fetch;
+    try {
+      const reactRes = await licenseService.activateLicense(TEST_LICENSE_KEY);
+      assert.equal(reactRes.ok, true);
+      assert.equal(dbManager.getDecryptedLicenseKey(), TEST_LICENSE_KEY);
     } finally {
       globalThis.fetch = origFetch;
     }

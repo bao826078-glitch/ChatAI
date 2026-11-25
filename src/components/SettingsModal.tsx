@@ -19,7 +19,6 @@ import {
   Moon,
   Check,
   Loader2,
-  Sparkles,
   Download,
   Upload,
   RotateCw,
@@ -39,6 +38,7 @@ import {
   SettingsTab,
 } from '../types';
 import { translations, translateErrorCode } from '../utils/i18n';
+import { apiFetch } from '../utils/api';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -76,7 +76,7 @@ interface SettingsModalProps {
   customModels: CustomModelConfig[];
   selectedModel: string;
   onSelectModel: (modelId: string) => void;
-  onRefreshModels: (providerId?: string) => Promise<void>;
+  onRefreshModels: (providerId?: string) => Promise<{ ok: boolean; error?: string; count?: number }>;
   isFetchingModels: boolean;
   onAddCustomModel: (payload: { providerId: string; modelId: string; displayName?: string; isDefault?: boolean }) => Promise<{ ok: boolean; error?: string }>;
   onDeleteCustomModel: (id: string) => Promise<void>;
@@ -91,9 +91,8 @@ interface SettingsModalProps {
   license: LicenseInfo;
   quota: QuotaInfo;
   onActivateLicense: (key: string) => Promise<{ ok: boolean; errorCode?: string; errorMessage?: string }>;
-  onVerifyLicense: (key?: string) => Promise<{ ok: boolean; errorCode?: string; errorMessage?: string }>;
-  onDeactivateLicense: () => Promise<{ ok: boolean; warning?: string }>;
-  onOpenWelcomeScreen: () => void;
+  onVerifyLicense: (key?: string) => Promise<{ ok: boolean; activated?: boolean; errorCode?: string; errorMessage?: string }>;
+  onDeactivateLicense: () => Promise<{ ok: boolean; warning?: string; error?: string }>;
   keyStatus: MasterKeyStatus | null;
   onRefreshKeyStatus: () => Promise<void>;
   onBackupMasterKey: (passphrase: string) => Promise<{ ok: boolean; backupContent?: string; filename?: string; error?: string }>;
@@ -147,7 +146,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onActivateLicense,
   onVerifyLicense,
   onDeactivateLicense,
-  onOpenWelcomeScreen,
   keyStatus,
   onRefreshKeyStatus,
   onBackupMasterKey,
@@ -168,8 +166,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [provDefault, setProvDefault] = useState(true);
   const [showProvKey, setShowProvKey] = useState(false);
   const [provSaving, setProvSaving] = useState(false);
+  const [testingFormConn, setTestingFormConn] = useState(false);
   const [provFeedback, setProvFeedback] = useState<{ type: 'idle' | 'success' | 'error'; msg?: string }>({ type: 'idle' });
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [confirmDeleteProviderId, setConfirmDeleteProviderId] = useState<string | null>(null);
 
   // Custom model state
   const [modelProviderId, setModelProviderId] = useState<string>(activeProviderId || providers[0]?.id || '');
@@ -182,6 +182,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [licenseInput, setLicenseInput] = useState('');
   const [licenseLoading, setLicenseLoading] = useState<'idle' | 'activating' | 'verifying' | 'deactivating'>('idle');
   const [licenseFeedback, setLicenseFeedback] = useState<{ type: 'idle' | 'success' | 'error'; msg?: string }>({ type: 'idle' });
+  const [confirmDeactivate, setConfirmDeactivate] = useState(false);
 
   // Security & Master Key state
   const [backupPassphrase, setBackupPassphrase] = useState('');
@@ -189,6 +190,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const [restorePassphrase, setRestorePassphrase] = useState('');
   const [securityLoading, setSecurityLoading] = useState<'idle' | 'backup' | 'restore' | 'rotate'>('idle');
   const [securityFeedback, setSecurityFeedback] = useState<{ type: 'idle' | 'success' | 'error'; msg?: string }>({ type: 'idle' });
+  const [confirmRotate, setConfirmRotate] = useState(false);
 
   const popularPresets = useMemo(() => getPopularOtherProviders(language), [language]);
 
@@ -199,6 +201,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       setModelFeedback({ type: 'idle' });
       setLicenseFeedback({ type: 'idle' });
       setSecurityFeedback({ type: 'idle' });
+      setConfirmDeleteProviderId(null);
+      setConfirmDeactivate(false);
+      setConfirmRotate(false);
       void onRefreshKeyStatus();
     }
   }, [isOpen, initialTab, onRefreshKeyStatus]);
@@ -206,8 +211,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   useEffect(() => {
     if (activeProviderId) {
       setModelProviderId(activeProviderId);
-    } else if (providers.length > 0 && !modelProviderId) {
+    } else if (providers.length > 0 && (!modelProviderId || !providers.some((p) => p.id === modelProviderId))) {
       setModelProviderId(providers[0].id);
+    } else if (providers.length === 0 && modelProviderId) {
+      setModelProviderId('');
     }
   }, [activeProviderId, providers, modelProviderId]);
 
@@ -248,21 +255,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setProvSaving(true);
     setProvFeedback({ type: 'idle' });
     try {
+      const cleanBaseUrl = provBaseUrl.replace(/\s+/g, '');
+      const cleanEndpoint = provEndpoint.replace(/\s+/g, '');
+      const cleanKey = provKey.replace(/[\r\n\t]+/g, '').trim();
       const result = editingProviderId
         ? await onUpdateProvider(editingProviderId, {
             name: provName.trim(),
             type: provType,
-            baseUrl: provBaseUrl.trim(),
-            apiEndpoint: provEndpoint.trim(),
-            apiKey: provKey.trim() || undefined,
+            baseUrl: cleanBaseUrl,
+            apiEndpoint: cleanEndpoint,
+            apiKey: cleanKey || undefined,
             isDefault: provDefault,
           })
         : await onCreateProvider({
             name: provName.trim(),
             type: provType,
-            baseUrl: provBaseUrl.trim(),
-            apiEndpoint: provEndpoint.trim(),
-            apiKey: provKey.trim(),
+            baseUrl: cleanBaseUrl,
+            apiEndpoint: cleanEndpoint,
+            apiKey: cleanKey,
             isDefault: provDefault,
           });
 
@@ -291,6 +301,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
     } finally {
       setTestingId(null);
+    }
+  };
+
+  const handleTestFormConnection = async () => {
+    setTestingFormConn(true);
+    setProvFeedback({ type: 'idle' });
+    try {
+      const cleanBaseUrl = provBaseUrl.replace(/\s+/g, '');
+      const cleanEndpoint = provEndpoint.replace(/\s+/g, '');
+      const cleanKey = provKey.replace(/[\r\n\t]+/g, '').trim();
+      const res = await apiFetch('/api/verify-key', {
+        method: 'POST',
+        body: JSON.stringify({
+          providerId: editingProviderId || undefined,
+          provider: provType,
+          baseUrl: cleanBaseUrl,
+          apiEndpoint: cleanEndpoint,
+          apiKey: cleanKey,
+        }),
+      });
+      const data = await res.json();
+      setProvFeedback({
+        type: data.ok ? 'success' : 'error',
+        msg: data.ok ? (data.message || t.statusConnected) : (data.error || t.statusError),
+      });
+    } catch (err: any) {
+      setProvFeedback({
+        type: 'error',
+        msg: err?.message || t.statusError,
+      });
+    } finally {
+      setTestingFormConn(false);
     }
   };
 
@@ -346,7 +388,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     try {
       const res = await onVerifyLicense(licenseInput.trim() || undefined);
       if (res.ok) {
-        setLicenseFeedback({ type: 'success', msg: t.licenseVerifiedSuccessDesc });
+        setLicenseFeedback({
+          type: 'success',
+          msg:
+            res.activated === false
+              ? t.licenseVerifiedReadyToActivate
+              : t.licenseVerifiedSuccessDesc,
+        });
       } else {
         setLicenseFeedback({
           type: 'error',
@@ -359,14 +407,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleDeactivateLicenseClick = async () => {
-    if (!window.confirm(t.confirmDeactivateLicense)) return;
+    setConfirmDeactivate(false);
     setLicenseLoading('deactivating');
     setLicenseFeedback({ type: 'idle' });
     try {
       const res = await onDeactivateLicense();
+      if (res.ok) {
+        setLicenseInput('');
+        setLicenseFeedback({
+          type: 'success',
+          msg: res.warning || (language === 'vi' ? 'Đã hủy kích hoạt và chuyển về gói Free.' : 'License deactivated. Switched to Free plan.'),
+        });
+      } else {
+        setLicenseFeedback({
+          type: 'error',
+          msg: res.error || (language === 'vi' ? 'Không thể hủy kích hoạt bản quyền.' : 'Failed to deactivate license.'),
+        });
+      }
+    } catch (err: any) {
       setLicenseFeedback({
-        type: 'success',
-        msg: res.warning || (language === 'vi' ? 'Đã chuyển về gói Free.' : 'License deactivated. Switched to Free plan.'),
+        type: 'error',
+        msg: err?.message || (language === 'vi' ? 'Không thể hủy kích hoạt bản quyền.' : 'Failed to deactivate license.'),
       });
     } finally {
       setLicenseLoading('idle');
@@ -430,7 +491,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleRotateKeyClick = async () => {
-    if (!window.confirm(t.rotateKeyConfirm)) return;
+    setConfirmRotate(false);
     setSecurityLoading('rotate');
     setSecurityFeedback({ type: 'idle' });
     try {
@@ -688,8 +749,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <input
                           type="text"
                           value={provBaseUrl}
-                          onChange={(e) => setProvBaseUrl(e.target.value)}
+                          onChange={(e) => setProvBaseUrl(e.target.value.replace(/\s+/g, ''))}
                           placeholder={t.providerBaseUrlPlaceholder}
+                          autoComplete="off"
+                          spellCheck={false}
                           className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#0c0c0f] text-xs font-mono focus:outline-none"
                         />
                       </div>
@@ -701,8 +764,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         <input
                           type="text"
                           value={provEndpoint}
-                          onChange={(e) => setProvEndpoint(e.target.value)}
+                          onChange={(e) => setProvEndpoint(e.target.value.replace(/\s+/g, ''))}
                           placeholder={t.providerEndpointPlaceholder}
+                          autoComplete="off"
+                          spellCheck={false}
                           className="w-full px-3 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#0c0c0f] text-xs font-mono focus:outline-none"
                         />
                       </div>
@@ -740,22 +805,38 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <span>{t.providerDefaultToggle}</span>
                     </label>
 
-                    <div className="flex justify-end gap-2 pt-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                       <button
                         type="button"
-                        onClick={() => setShowProviderForm(false)}
-                        className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-medium cursor-pointer"
+                        onClick={() => void handleTestFormConnection()}
+                        disabled={
+                          testingFormConn ||
+                          provSaving ||
+                          (!provKey.trim() && !(editingProviderId ? providers.find((p) => p.id === editingProviderId)?.hasApiKey : false))
+                        }
+                        className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-medium cursor-pointer disabled:opacity-40"
                       >
-                        {t.cancelBtn}
+                        <RefreshCw className={`w-3.5 h-3.5 ${testingFormConn ? 'animate-spin' : ''}`} />
+                        <span>{testingFormConn ? t.testingConnectionBtn : t.testConnectionBtn}</span>
                       </button>
-                      <button
-                        type="submit"
-                        disabled={provSaving}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-semibold cursor-pointer disabled:opacity-50"
-                      >
-                        {provSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                        <span>{t.saveBtn}</span>
-                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowProviderForm(false)}
+                          className="px-4 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-medium cursor-pointer"
+                        >
+                          {t.cancelBtn}
+                        </button>
+                        <button
+                          type="submit"
+                          disabled={provSaving}
+                          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 text-xs font-semibold cursor-pointer disabled:opacity-50"
+                        >
+                          {provSaving && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                          <span>{t.saveBtn}</span>
+                        </button>
+                      </div>
                     </div>
                   </form>
                 )}
@@ -767,8 +848,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   </div>
                 ) : (
                   <div className="space-y-2.5">
-                    {providers.map((p) => {
-                      const isActive = p.id === activeProviderId || p.isDefault;
+                    {(() => {
+                      const effectiveActiveId =
+                        activeProviderId || providers.find((x) => x.isDefault)?.id || providers[0]?.id || '';
+                      return providers.map((p) => {
+                      const isActive = p.id === effectiveActiveId;
                       const isTesting = testingId === p.id;
                       return (
                         <div
@@ -796,8 +880,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                             <div className="flex items-center gap-2 flex-wrap text-xs text-neutral-500 dark:text-neutral-400 font-mono">
                               <span>{p.hasApiKey ? p.keyMask : t.noKeyYet}</span>
-                              {p.baseUrl && <span>· {p.baseUrl}</span>}
-                              {p.apiEndpoint && <span>{p.apiEndpoint}</span>}
+                              {p.baseUrl && <span>· {p.baseUrl}{p.apiEndpoint || ''}</span>}
+                              {!p.baseUrl && p.apiEndpoint && <span>· {p.apiEndpoint}</span>}
                             </div>
 
                             <div className="flex items-center gap-1.5 text-xs">
@@ -844,22 +928,41 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             >
                               <Edit2 className="w-3.5 h-3.5" />
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                if (window.confirm(t.confirmDeleteProvider)) {
-                                  onDeleteProvider(p.id);
-                                }
-                              }}
-                              className="p-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-red-50 dark:hover:bg-red-950/40 text-neutral-500 hover:text-red-600 cursor-pointer"
-                              title={t.deleteBtn}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                            {confirmDeleteProviderId === p.id ? (
+                              <div className="inline-flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    setConfirmDeleteProviderId(null);
+                                    await onDeleteProvider(p.id);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-xs font-semibold cursor-pointer"
+                                >
+                                  {t.confirmBtn}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmDeleteProviderId(null)}
+                                  className="px-2.5 py-1 rounded-lg border border-neutral-300 dark:border-neutral-700 text-xs font-medium cursor-pointer"
+                                >
+                                  {t.cancelBtn}
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setConfirmDeleteProviderId(p.id)}
+                                className="p-1.5 rounded-lg border border-neutral-200 dark:border-neutral-800 hover:bg-red-50 dark:hover:bg-red-950/40 text-neutral-500 hover:text-red-600 cursor-pointer"
+                                title={t.deleteBtn}
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
-                    })}
+                    });
+                    })()}
                   </div>
                 )}
 
@@ -881,7 +984,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                   <button
                     type="button"
-                    onClick={() => onRefreshModels(modelProviderId)}
+                    onClick={async () => {
+                      setModelFeedback({ type: 'idle' });
+                      const res = await onRefreshModels(modelProviderId);
+                      if (res && !res.ok && res.error) {
+                        setModelFeedback({ type: 'error', msg: res.error });
+                      }
+                    }}
                     disabled={isFetchingModels || !modelProviderId}
                     className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-semibold cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
                   >
@@ -1223,20 +1332,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     />
                   </label>
                 </div>
-
-                <div className="pt-2 border-t border-neutral-200 dark:border-neutral-800">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      onClose();
-                      onOpenWelcomeScreen();
-                    }}
-                    className="inline-flex items-center gap-1.5 text-xs font-medium text-neutral-600 dark:text-neutral-400 hover:text-neutral-900 dark:hover:text-white underline underline-offset-4 cursor-pointer"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>{t.reopenWelcomeBtn}</span>
-                  </button>
-                </div>
               </div>
             )}
 
@@ -1346,12 +1441,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             {license.activatedAt ? new Date(license.activatedAt).toLocaleDateString() : '—'}
                           </span>
                         </div>
-                        <div>
-                          <span className="text-neutral-500 dark:text-neutral-400 block">{t.expirationDateLabel}</span>
-                          <span className="font-mono tabular-nums">
-                            {license.expiresAt ? new Date(license.expiresAt).toLocaleDateString() : t.noExpirationLabel}
-                          </span>
-                        </div>
                       </>
                     )}
                   </div>
@@ -1438,25 +1527,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </form>
                 ) : (
-                  <div className="flex flex-wrap gap-2.5">
-                    <button
-                      type="button"
-                      onClick={handleVerifyLicenseClick}
-                      disabled={licenseLoading !== 'idle'}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                    >
-                      {licenseLoading === 'verifying' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                      <span>{licenseLoading === 'verifying' ? t.verifyingLicenseBtn : t.verifyLicenseBtn}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleDeactivateLicenseClick}
-                      disabled={licenseLoading !== 'idle'}
-                      className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-red-300 dark:border-red-500/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-xs font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
-                    >
-                      {licenseLoading === 'deactivating' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                      <span>{licenseLoading === 'deactivating' ? t.deactivatingLicenseBtn : t.deactivateLicenseBtn}</span>
-                    </button>
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-2.5">
+                      <button
+                        type="button"
+                        onClick={handleVerifyLicenseClick}
+                        disabled={licenseLoading !== 'idle'}
+                        className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {licenseLoading === 'verifying' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                        <span>{licenseLoading === 'verifying' ? t.verifyingLicenseBtn : t.verifyLicenseBtn}</span>
+                      </button>
+                      {!confirmDeactivate && (
+                        <button
+                          type="button"
+                          onClick={() => setConfirmDeactivate(true)}
+                          disabled={licenseLoading !== 'idle'}
+                          className="inline-flex items-center gap-2 px-4 py-2 rounded-xl border border-red-300 dark:border-red-500/40 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950/30 text-xs font-semibold cursor-pointer disabled:opacity-50 whitespace-nowrap"
+                        >
+                          {licenseLoading === 'deactivating' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                          <span>{licenseLoading === 'deactivating' ? t.deactivatingLicenseBtn : t.deactivateLicenseBtn}</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {confirmDeactivate && (
+                      <div className="p-3.5 rounded-xl border border-red-300 dark:border-red-500/40 bg-red-50 dark:bg-red-950/25 text-xs space-y-2.5">
+                        <p className="text-red-800 dark:text-red-200 leading-relaxed">{t.confirmDeactivateLicense}</p>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void handleDeactivateLicenseClick()}
+                            disabled={licenseLoading !== 'idle'}
+                            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold cursor-pointer disabled:opacity-50"
+                          >
+                            {licenseLoading === 'deactivating' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                            <span>{t.confirmBtn}</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDeactivate(false)}
+                            disabled={licenseLoading !== 'idle'}
+                            className="px-3.5 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#0c0c0f] font-medium cursor-pointer"
+                          >
+                            {t.cancelBtn}
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1663,25 +1781,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </form>
 
                 {/* Rotate Master Key */}
-                <div className="p-4 sm:p-5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#151519] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <div className="space-y-1">
-                    <h4 className="text-sm font-semibold flex items-center gap-2">
-                      <RotateCw className="w-4 h-4" />
-                      <span>{t.rotateKeyTitle}</span>
-                    </h4>
-                    <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
-                      {t.rotateKeyDesc}
-                    </p>
+                <div className="p-4 sm:p-5 rounded-xl border border-neutral-200 dark:border-neutral-800 bg-neutral-50 dark:bg-[#151519] space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <h4 className="text-sm font-semibold flex items-center gap-2">
+                        <RotateCw className="w-4 h-4" />
+                        <span>{t.rotateKeyTitle}</span>
+                      </h4>
+                      <p className="text-xs text-neutral-500 dark:text-neutral-400 leading-relaxed">
+                        {t.rotateKeyDesc}
+                      </p>
+                    </div>
+                    {!confirmRotate && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmRotate(true)}
+                        disabled={securityLoading !== 'idle' || !keyStatus || keyStatus.status !== 'ready'}
+                        className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-semibold cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
+                      >
+                        <RotateCw className={`w-3.5 h-3.5 ${securityLoading === 'rotate' ? 'animate-spin' : ''}`} />
+                        <span>{securityLoading === 'rotate' ? t.rotatingKeyBtn : t.rotateKeyBtn}</span>
+                      </button>
+                    )}
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => void handleRotateKeyClick()}
-                    disabled={securityLoading !== 'idle' || !keyStatus || keyStatus.status !== 'ready'}
-                    className="inline-flex items-center justify-center gap-1.5 px-4 py-2 rounded-lg border border-neutral-300 dark:border-neutral-700 hover:bg-neutral-100 dark:hover:bg-neutral-800 text-xs font-semibold cursor-pointer disabled:opacity-40 whitespace-nowrap shrink-0"
-                  >
-                    <RotateCw className={`w-3.5 h-3.5 ${securityLoading === 'rotate' ? 'animate-spin' : ''}`} />
-                    <span>{securityLoading === 'rotate' ? t.rotatingKeyBtn : t.rotateKeyBtn}</span>
-                  </button>
+
+                  {confirmRotate && (
+                    <div className="p-3 rounded-lg border border-amber-300 dark:border-amber-500/40 bg-amber-50/70 dark:bg-amber-950/25 text-xs space-y-2">
+                      <p className="text-amber-900 dark:text-amber-200 leading-relaxed">{t.rotateKeyConfirm}</p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void handleRotateKeyClick()}
+                          disabled={securityLoading !== 'idle'}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-neutral-900 dark:bg-white text-white dark:text-neutral-950 font-semibold cursor-pointer disabled:opacity-50"
+                        >
+                          {securityLoading === 'rotate' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                          <span>{t.confirmBtn}</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setConfirmRotate(false)}
+                          disabled={securityLoading !== 'idle'}
+                          className="px-3.5 py-1.5 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-[#0c0c0f] font-medium cursor-pointer"
+                        >
+                          {t.cancelBtn}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

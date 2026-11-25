@@ -9,6 +9,12 @@ services:
       NODE_ENV: production
       PORT: 8088
       DB_PATH: /data/chatai.db
+      # KEYGATE_PRODUCT_ID:
+      # KEYGATE_API_SECRET:
+      # LICENSE_VALIDATION_INTERVAL: 3600
+      # LICENSE_CACHE_TTL: 86400
+      # FREE_DAILY_CHAT_LIMIT: 2000
+      # FREE_DAILY_TOKEN_LIMIT: 2000000
     volumes:
       - chatai_data:/data
 

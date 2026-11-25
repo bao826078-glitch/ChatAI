@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ArrowUp, Square, Mic, AlertCircle, Coins, KeyRound } from 'lucide-react';
 import { estimateTokens, formatTokenCount } from '../utils/tokenEstimator';
-import { AppLanguage, QuotaInfo } from '../types';
+import { AppLanguage, QuotaInfo, SettingsTab } from '../types';
 import { translations } from '../utils/i18n';
 
 interface ChatInputProps {
@@ -9,7 +9,7 @@ interface ChatInputProps {
   isStreaming: boolean;
   onStopStreaming: () => void;
   disabled?: boolean;
-  onOpenSettings: (tab?: 'providers' | 'models' | 'language' | 'general' | 'license') => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
   hasReadyProvider: boolean;
   language: AppLanguage;
   quota: QuotaInfo;
@@ -174,9 +174,6 @@ export const ChatInput: React.FC<ChatInputProps> = ({
           }
           rows={1}
           disabled={disabled || quota.limitReached}
-          onClick={() => {
-            if (!hasReadyProvider) onOpenSettings('providers');
-          }}
           className="w-full py-3 pl-3.5 pr-16 bg-transparent text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none resize-none max-h-40 leading-relaxed disabled:opacity-60"
         />
 

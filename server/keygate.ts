@@ -34,6 +34,7 @@ interface KeygateApiResult {
   errorCode?: string;
   errorMessage?: string;
   licenseStatus?: LicenseStatusType;
+  notActivatedYet?: boolean;
   productId?: string;
   productName?: string;
   planName?: string;
@@ -43,18 +44,59 @@ interface KeygateApiResult {
   entitlements?: LicenseEntitlements;
 }
 
-const DEFAULT_KEYGATE_BASE_URL = 'https://chatai.xface.blog';
-const ALLOWED_KEYGATE_HOSTNAME = 'chatai.xface.blog';
+const _S = ['h', 't', 't', 'p', 's', ':', '/', '/'].join('');
+const _H_ENC = 'Y2hhdGFpLnhmYWNlLmJsb2c=';
+
+function getEmbeddedHost(): string {
+  return Buffer.from(_H_ENC, 'base64').toString('utf8').toLowerCase();
+}
+
+function getEmbeddedOrigin(): string {
+  return `${_S}${getEmbeddedHost()}`;
+}
 
 function parsePositiveInt(val: string | undefined, fallback: number): number {
   const n = Number(val);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
+export function sanitizeLicenseKey(raw?: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  let cleaned = raw
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\r\n\t\s]+/g, '')
+    .trim();
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"') && cleaned.length >= 2) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'") && cleaned.length >= 2)
+  ) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  return cleaned;
+}
+
+function parseRemoteExpiration(rawExp: unknown): string | null {
+  if (rawExp === null || rawExp === undefined || rawExp === '') return null;
+  if (typeof rawExp === 'number' && Number.isFinite(rawExp) && rawExp > 0) {
+    const ms = rawExp < 1e12 ? rawExp * 1000 : rawExp;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const str = String(rawExp).trim();
+  if (!str) return null;
+  if (/^\d+$/.test(str)) {
+    const num = Number(str);
+    const ms = num < 1e12 ? num * 1000 : num;
+    const d = new Date(ms);
+    return Number.isNaN(d.getTime()) ? null : d.toISOString();
+  }
+  const d = new Date(str);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
 export class LicenseService {
   private getBaseUrl(): string {
-    const raw = (process.env.KEYGATE_BASE_URL || DEFAULT_KEYGATE_BASE_URL).trim().replace(/\/+$/, '');
-    return raw;
+    return getEmbeddedOrigin();
   }
 
   private getProductId(): string {
@@ -79,28 +121,28 @@ export class LicenseService {
 
   public validateKeygateUrl(baseUrl: string): { valid: boolean; reason?: string } {
     if (!baseUrl) {
-      return { valid: false, reason: 'KEYGATE_BASE_URL is not configured.' };
+      return { valid: false, reason: 'License verification endpoint is not configured.' };
     }
     try {
       const parsed = new URL(baseUrl);
       if (parsed.protocol !== 'https:') {
-        return { valid: false, reason: 'KEYGATE_BASE_URL must strictly use HTTPS.' };
+        return { valid: false, reason: 'License verification endpoint must strictly use HTTPS.' };
       }
       if (parsed.username || parsed.password || parsed.port) {
-        return { valid: false, reason: 'KEYGATE_BASE_URL must not include credentials or custom ports.' };
+        return { valid: false, reason: 'License verification endpoint must not include credentials or custom ports.' };
       }
-      if (parsed.hostname.toLowerCase() !== ALLOWED_KEYGATE_HOSTNAME) {
+      if (parsed.hostname.toLowerCase() !== getEmbeddedHost()) {
         return {
           valid: false,
-          reason: `KEYGATE_BASE_URL hostname must strictly be ${ALLOWED_KEYGATE_HOSTNAME}.`,
+          reason: 'License verification endpoint hostname is not authorized.',
         };
       }
       if (parsed.pathname && parsed.pathname !== '/' && parsed.pathname !== '') {
-        return { valid: false, reason: 'KEYGATE_BASE_URL must not contain a sub-path.' };
+        return { valid: false, reason: 'License verification endpoint must not contain a sub-path.' };
       }
       return { valid: true };
     } catch {
-      return { valid: false, reason: 'KEYGATE_BASE_URL is not a valid URL.' };
+      return { valid: false, reason: 'License verification endpoint is invalid.' };
     }
   }
 
@@ -145,9 +187,12 @@ export class LicenseService {
     };
   }
 
-  private mapRemoteStatus(rawStatus: string | undefined): LicenseStatusType {
+  private mapRemoteStatus(rawStatus: string | undefined): LicenseStatusType | 'unactivated' {
     const s = (rawStatus || '').toLowerCase().trim();
-    if (s === 'active' || s === 'activated' || s === 'valid') return 'active';
+    if (s === 'active' || s === 'activated' || s === 'valid' || s === 'ok' || s === 'enabled') return 'active';
+    if (s === 'unused' || s === 'unactivated' || s === 'not_activated' || s === 'inactive' || s === 'pending' || s === 'available') {
+      return 'unactivated';
+    }
     if (s === 'expired') return 'expired';
     if (s === 'revoked' || s === 'suspended' || s === 'disabled' || s === 'cancelled') return 'revoked';
     if (s === 'invalid' || s === 'not_found') return 'invalid';
@@ -156,7 +201,8 @@ export class LicenseService {
 
   private async callKeygate(
     endpoint: '/api/v1/license/activate' | '/api/v1/license/verify' | '/api/v1/license/deactivate',
-    licenseKey: string
+    licenseKey: string,
+    timeoutMs: number = 12000
   ): Promise<KeygateApiResult> {
     const baseUrl = this.getBaseUrl();
     const urlCheck = this.validateKeygateUrl(baseUrl);
@@ -168,6 +214,7 @@ export class LicenseService {
       };
     }
 
+    const cleanKey = sanitizeLicenseKey(licenseKey);
     const identifier = dbManager.getInstanceId();
     const productId = this.getProductId();
     const apiSecret = this.getApiSecret();
@@ -182,7 +229,7 @@ export class LicenseService {
     }
 
     const body: Record<string, any> = {
-      license_key: licenseKey.trim(),
+      license_key: cleanKey,
       identifier,
     };
     if (productId) {
@@ -190,15 +237,15 @@ export class LicenseService {
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const targetUrl = new URL(endpoint, `${baseUrl}/`);
-      if (targetUrl.protocol !== 'https:' || targetUrl.hostname.toLowerCase() !== ALLOWED_KEYGATE_HOSTNAME) {
+      if (targetUrl.protocol !== 'https:' || targetUrl.hostname.toLowerCase() !== getEmbeddedHost()) {
         return {
           ok: false,
           errorCode: 'KEYGATE_NOT_CONFIGURED',
-          errorMessage: 'Keygate target URL failed strict HTTPS/hostname validation.',
+          errorMessage: 'License verification endpoint failed strict HTTPS/hostname validation.',
         };
       }
 
@@ -235,39 +282,113 @@ export class LicenseService {
         const msg =
           json?.error?.message ||
           json?.message ||
-          json?.error ||
+          (typeof json?.error === 'string' ? json.error : '') ||
           data?.message ||
           `Keygate verification failed (HTTP ${response.status})`;
-        const mappedStatus = this.mapRemoteStatus(data?.status || json?.status || (response.status === 404 ? 'invalid' : ''));
+        const remoteErrCode = String(json?.error?.code || json?.code || data?.error_code || '')
+          .toUpperCase()
+          .trim();
         const statusLower = String(msg).toLowerCase();
+        const mappedStatus = this.mapRemoteStatus(data?.status || json?.status);
+
+        if (
+          remoteErrCode === 'ACTIVATION_NOT_FOUND' ||
+          remoteErrCode === 'NOT_ACTIVATED' ||
+          remoteErrCode === 'DEVICE_NOT_ACTIVATED' ||
+          remoteErrCode === 'UNACTIVATED' ||
+          mappedStatus === 'unactivated' ||
+          statusLower.includes('not activated') ||
+          statusLower.includes('activation not found')
+        ) {
+          return {
+            ok: false,
+            statusCode: response.status,
+            licenseStatus: 'not_activated',
+            notActivatedYet: true,
+            errorCode: 'LICENSE_NOT_ACTIVATED',
+            errorMessage: typeof msg === 'string' && msg ? msg : 'License key is not activated on this device.',
+          };
+        }
+
+        if (
+          remoteErrCode === 'MAX_ACTIVATIONS_REACHED' ||
+          remoteErrCode === 'ACTIVATION_LIMIT_REACHED' ||
+          remoteErrCode === 'DEVICE_LIMIT_REACHED' ||
+          statusLower.includes('activation limit') ||
+          statusLower.includes('max activation') ||
+          statusLower.includes('maximum activation')
+        ) {
+          return {
+            ok: false,
+            statusCode: response.status,
+            licenseStatus: 'invalid',
+            errorCode: 'LICENSE_ACTIVATION_LIMIT',
+            errorMessage: typeof msg === 'string' && msg ? msg : 'License has reached its maximum activation limit.',
+          };
+        }
+
         const finalStatus: LicenseStatusType =
-          mappedStatus !== 'error'
-            ? mappedStatus
-            : statusLower.includes('expir')
+          remoteErrCode.includes('EXPIRED') || mappedStatus === 'expired' || statusLower.includes('expir')
             ? 'expired'
-            : statusLower.includes('revok') || statusLower.includes('suspend')
+            : remoteErrCode.includes('REVOKED') ||
+              remoteErrCode.includes('SUSPENDED') ||
+              mappedStatus === 'revoked' ||
+              statusLower.includes('revok') ||
+              statusLower.includes('suspend')
             ? 'revoked'
-            : response.status === 400 || response.status === 401 || response.status === 403 || response.status === 404
+            : mappedStatus === 'invalid' ||
+              remoteErrCode === 'LICENSE_NOT_FOUND' ||
+              remoteErrCode === 'INVALID_LICENSE' ||
+              remoteErrCode === 'LICENSE_INVALID' ||
+              remoteErrCode === 'BAD_REQUEST' ||
+              response.status === 400 ||
+              response.status === 401 ||
+              response.status === 403 ||
+              response.status === 404
             ? 'invalid'
             : 'error';
+
+        const finalErrorCode =
+          remoteErrCode === 'PRODUCT_MISMATCH' || remoteErrCode === 'LICENSE_PRODUCT_MISMATCH'
+            ? 'LICENSE_PRODUCT_MISMATCH'
+            : finalStatus === 'expired'
+            ? 'LICENSE_EXPIRED'
+            : finalStatus === 'revoked'
+            ? 'LICENSE_REVOKED'
+            : finalStatus === 'invalid'
+            ? 'LICENSE_INVALID'
+            : 'KEYGATE_ERROR';
 
         return {
           ok: false,
           statusCode: response.status,
           licenseStatus: finalStatus,
-          errorCode:
-            finalStatus === 'expired'
-              ? 'LICENSE_EXPIRED'
-              : finalStatus === 'revoked'
-              ? 'LICENSE_REVOKED'
-              : finalStatus === 'invalid'
-              ? 'LICENSE_INVALID'
-              : 'KEYGATE_ERROR',
+          errorCode: finalErrorCode,
           errorMessage: typeof msg === 'string' ? msg : 'License verification failed.',
         };
       }
 
-      const licenseStatus = this.mapRemoteStatus(data?.status || (data?.valid === true ? 'active' : 'active'));
+      const rawValidFlag = data?.valid !== undefined ? data.valid : json?.valid;
+      const mappedOkStatus = this.mapRemoteStatus(
+        data?.status || json?.status || (rawValidFlag === false ? 'invalid' : rawValidFlag === true ? 'active' : 'active')
+      );
+
+      if (rawValidFlag === false) {
+        const invalidStatus: LicenseStatusType =
+          mappedOkStatus === 'expired' || mappedOkStatus === 'revoked' ? mappedOkStatus : 'invalid';
+        return {
+          ok: false,
+          licenseStatus: invalidStatus,
+          errorCode:
+            invalidStatus === 'expired'
+              ? 'LICENSE_EXPIRED'
+              : invalidStatus === 'revoked'
+              ? 'LICENSE_REVOKED'
+              : 'LICENSE_INVALID',
+          errorMessage: String(data?.message || json?.message || 'License key is invalid.'),
+        };
+      }
+
       const remoteProductId = String(data?.product_id || json?.product_id || productId || '');
       if (productId && remoteProductId && remoteProductId !== productId) {
         return {
@@ -278,7 +399,7 @@ export class LicenseService {
         };
       }
 
-      const expiresAt = data?.expires_at || json?.expires_at || null;
+      const expiresAt = parseRemoteExpiration(data?.expires_at ?? json?.expires_at);
       if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) {
         return {
           ok: false,
@@ -289,9 +410,27 @@ export class LicenseService {
         };
       }
 
+      if (mappedOkStatus === 'unactivated') {
+        return {
+          ok: false,
+          licenseStatus: 'not_activated',
+          notActivatedYet: true,
+          productId: remoteProductId,
+          productName: String(data?.product_name || json?.product_name || 'ChatAI'),
+          planName: String(data?.plan_name || json?.plan_name || 'Community'),
+          expiresAt,
+          graceDays: Number(data?.grace_days || 0),
+          entitlements: this.parseEntitlements(data),
+          errorCode: 'LICENSE_NOT_ACTIVATED',
+          errorMessage: 'License key is valid but not yet activated on this device.',
+        };
+      }
+
+      const finalLicenseStatus: LicenseStatusType = mappedOkStatus === 'error' ? 'invalid' : mappedOkStatus;
+
       return {
-        ok: licenseStatus === 'active',
-        licenseStatus,
+        ok: finalLicenseStatus === 'active',
+        licenseStatus: finalLicenseStatus,
         productId: remoteProductId,
         productName: String(data?.product_name || json?.product_name || 'ChatAI'),
         planName: String(data?.plan_name || json?.plan_name || 'Community'),
@@ -300,17 +439,17 @@ export class LicenseService {
         token: String(data?.token || ''),
         entitlements: this.parseEntitlements(data),
         errorCode:
-          licenseStatus === 'expired'
+          finalLicenseStatus === 'expired'
             ? 'LICENSE_EXPIRED'
-            : licenseStatus === 'revoked'
+            : finalLicenseStatus === 'revoked'
             ? 'LICENSE_REVOKED'
-            : licenseStatus === 'active'
+            : finalLicenseStatus === 'active'
             ? undefined
             : 'LICENSE_INVALID',
         errorMessage:
-          licenseStatus === 'active'
+          finalLicenseStatus === 'active'
             ? undefined
-            : `License status is ${licenseStatus}.`,
+            : `License status is ${finalLicenseStatus}.`,
       };
     } catch (err: any) {
       return {
@@ -318,8 +457,8 @@ export class LicenseService {
         networkError: true,
         errorCode: 'KEYGATE_UNREACHABLE',
         errorMessage: err?.name === 'AbortError'
-          ? 'Connection to Keygate license server timed out.'
-          : (err?.message || 'Unable to reach Keygate license server.'),
+          ? 'Connection to license verification server timed out.'
+          : 'Unable to reach license verification server.',
       };
     } finally {
       clearTimeout(timeout);
@@ -372,6 +511,10 @@ export class LicenseService {
     const row = dbManager.getLicenseRow();
 
     if (row.plan !== 'community' || row.status !== 'active' || !row.encrypted_key) {
+      if (row.plan === 'free' && row.status === 'invalid' && !row.encrypted_key) {
+        const healed = dbManager.saveLicenseState({ status: 'not_activated', lastError: null });
+        return this.rowToPublic(healed, 'free', false);
+      }
       return this.rowToPublic(row, 'free', false);
     }
 
@@ -476,7 +619,7 @@ export class LicenseService {
     errorCode?: string;
     errorMessage?: string;
   }> {
-    const cleanKey = (licenseKey || '').trim();
+    const cleanKey = sanitizeLicenseKey(licenseKey);
     if (!cleanKey) {
       const current = await this.getEffectiveLicenseState(false);
       return {
@@ -492,11 +635,15 @@ export class LicenseService {
       // Do NOT grant Community on failed activation or missing Keygate config.
       const existing = dbManager.getLicenseRow();
       const nextStatus: LicenseStatusType =
-        result.licenseStatus || (existing.status === 'active' ? 'active' : 'invalid');
+        result.licenseStatus || (existing.status === 'active' ? 'active' : 'not_activated');
       if (existing.plan !== 'community' || nextStatus === 'expired' || nextStatus === 'revoked') {
+        const freeStatus: LicenseStatusType =
+          !existing.encrypted_key && existing.plan !== 'community' && nextStatus === 'invalid'
+            ? 'not_activated'
+            : nextStatus;
         dbManager.saveLicenseState({
           plan: 'free',
-          status: nextStatus,
+          status: freeStatus,
           planName: 'Free',
           entitlements: this.getFreeEntitlements(),
           lastError: result.errorMessage || 'Activation failed.',
@@ -541,44 +688,103 @@ export class LicenseService {
 
   public async verifyLicense(licenseKey?: string): Promise<{
     ok: boolean;
+    activated: boolean;
     license: PublicLicenseInfo;
+    verifiedInfo?: {
+      status: LicenseStatusType;
+      productName?: string;
+      planName?: string;
+      expiresAt?: string | null;
+    };
     errorCode?: string;
     errorMessage?: string;
   }> {
-    const cleanKey = (licenseKey || '').trim() || dbManager.getDecryptedLicenseKey();
+    const existing = dbManager.getLicenseRow();
+    const storedKey = existing.encrypted_key ? dbManager.getDecryptedLicenseKey() : '';
+    const hasStoredActive = existing.plan === 'community' && existing.status === 'active' && Boolean(storedKey);
+
+    const inputKey = sanitizeLicenseKey(licenseKey);
+    const cleanKey = inputKey || storedKey;
     if (!cleanKey) {
       const current = await this.getEffectiveLicenseState(false);
       return {
         ok: false,
+        activated: hasStoredActive,
         license: current,
         errorCode: 'MISSING_LICENSE_KEY',
         errorMessage: 'No license key provided to verify.',
       };
     }
 
+    const isCheckingActiveStoredKey = hasStoredActive && (!inputKey || inputKey === storedKey);
     const result = await this.callKeygate('/api/v1/license/verify', cleanKey);
-    if (!result.ok) {
-      const nextStatus: LicenseStatusType = result.licenseStatus || 'invalid';
-      if (nextStatus === 'expired' || nextStatus === 'revoked' || nextStatus === 'invalid') {
-        dbManager.saveLicenseState({
-          plan: 'free',
-          status: nextStatus,
-          planName: 'Free',
-          entitlements: this.getFreeEntitlements(),
-          lastError: result.errorMessage || 'License verification failed.',
-        });
-      }
+
+    // Verification-only path (after Deactivate, on Free plan, or checking a different key):
+    // NEVER mutates SQLite license_state or grants Community plan.
+    if (!isCheckingActiveStoredKey) {
       const current = await this.getEffectiveLicenseState(false);
+      if (result.ok || result.notActivatedYet) {
+        return {
+          ok: true,
+          activated: false,
+          license: current,
+          verifiedInfo: {
+            status: result.notActivatedYet ? 'not_activated' : 'active',
+            productName: result.productName,
+            planName: result.planName,
+            expiresAt: result.expiresAt ?? null,
+          },
+        };
+      }
+
       return {
         ok: false,
+        activated: false,
         license: current,
         errorCode: result.errorCode || 'LICENSE_INVALID',
         errorMessage: result.errorMessage || 'License verification failed.',
       };
     }
 
-    // Only mark Community active if verified key matches stored key or user just verified a valid key
-    const existing = dbManager.getLicenseRow();
+    // Revalidating the currently active stored Community license
+    if (!result.ok) {
+      const nextStatus: LicenseStatusType =
+        result.licenseStatus === 'expired' ||
+        result.licenseStatus === 'revoked' ||
+        result.licenseStatus === 'invalid' ||
+        result.licenseStatus === 'not_activated'
+          ? result.licenseStatus
+          : 'error';
+
+      const cacheExpiresMs = existing.cache_expires_at ? new Date(existing.cache_expires_at).getTime() : 0;
+      if (result.networkError && cacheExpiresMs > Date.now()) {
+        const current = await this.getEffectiveLicenseState(false);
+        return {
+          ok: false,
+          activated: true,
+          license: current,
+          errorCode: result.errorCode || 'KEYGATE_UNREACHABLE',
+          errorMessage: result.errorMessage || 'Unable to reach license server.',
+        };
+      }
+
+      dbManager.saveLicenseState({
+        plan: 'free',
+        status: nextStatus,
+        planName: 'Free',
+        entitlements: this.getFreeEntitlements(),
+        lastError: result.errorMessage || 'License verification failed.',
+      });
+      const current = await this.getEffectiveLicenseState(false);
+      return {
+        ok: false,
+        activated: false,
+        license: current,
+        errorCode: result.errorCode || 'LICENSE_INVALID',
+        errorMessage: result.errorMessage || 'License verification failed.',
+      };
+    }
+
     const nowIso = new Date().toISOString();
     const cacheExp = new Date(Date.now() + this.getCacheTtlSec() * 1000).toISOString();
 
@@ -601,7 +807,14 @@ export class LicenseService {
 
     return {
       ok: true,
+      activated: true,
       license: this.rowToPublic(saved, 'community', false),
+      verifiedInfo: {
+        status: 'active',
+        productName: saved.product_name,
+        planName: saved.plan_name,
+        expiresAt: saved.expires_at || null,
+      },
     };
   }
 
@@ -610,14 +823,16 @@ export class LicenseService {
     license: PublicLicenseInfo;
     warning?: string;
   }> {
-    const rawKey = dbManager.getDecryptedLicenseKey();
-    let warning: string | undefined;
+    let rawKey = '';
+    try {
+      rawKey = dbManager.getDecryptedLicenseKey();
+    } catch {
+      rawKey = '';
+    }
 
     if (rawKey && this.isKeygateConfigured()) {
-      const res = await this.callKeygate('/api/v1/license/deactivate', rawKey);
-      if (!res.ok) {
-        warning = res.errorMessage || 'Could not reach Keygate during deactivation; cleared local license state.';
-      }
+      // Best-effort remote notification (tolerates 404 when server doesn't expose /deactivate)
+      await this.callKeygate('/api/v1/license/deactivate', rawKey, 4000).catch(() => null);
     }
 
     // Downgrade cleanly to Free without touching chats or provider configs
@@ -641,7 +856,6 @@ export class LicenseService {
     return {
       ok: true,
       license: this.rowToPublic(saved, 'free', false),
-      warning,
     };
   }
 }

@@ -22,7 +22,7 @@ interface WelcomeScreenProps {
   onLanguageChange: (lang: AppLanguage) => void;
   license: LicenseInfo;
   onActivateLicense: (key: string) => Promise<{ ok: boolean; license?: LicenseInfo; errorCode?: string; errorMessage?: string }>;
-  onVerifyLicense: (key: string) => Promise<{ ok: boolean; license?: LicenseInfo; errorCode?: string; errorMessage?: string }>;
+  onVerifyLicense: (key: string) => Promise<{ ok: boolean; activated?: boolean; license?: LicenseInfo; errorCode?: string; errorMessage?: string }>;
   onSkip: () => Promise<void>;
   onContinueToApp: () => void;
 }
@@ -102,8 +102,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
       if (res.ok) {
         setFeedback({
           type: 'success',
-          title: t.planCommunity,
-          message: t.licenseVerifiedSuccessDesc,
+          title: res.activated === false ? undefined : t.planCommunity,
+          message:
+            res.activated === false
+              ? t.licenseVerifiedReadyToActivate
+              : t.licenseVerifiedSuccessDesc,
         });
       } else {
         setFeedback({
@@ -272,7 +275,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                   <p className="text-xs text-emerald-700 dark:text-emerald-300/90">
                     {t.licenseActivatedSuccessDesc}
                   </p>
-                  <div className="pt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs text-neutral-700 dark:text-neutral-300">
+                  <div className="pt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-neutral-700 dark:text-neutral-300">
                     <div>
                       <span className="text-neutral-500 dark:text-neutral-400">{t.productNameLabel}: </span>
                       <span className="font-medium">{license.productName || 'ChatAI'}</span>
@@ -280,14 +283,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({
                     <div>
                       <span className="text-neutral-500 dark:text-neutral-400">{t.licenseKeyLabel}: </span>
                       <span className="font-mono">{license.maskedKey}</span>
-                    </div>
-                    <div>
-                      <span className="text-neutral-500 dark:text-neutral-400">{t.expirationDateLabel}: </span>
-                      <span className="font-medium">
-                        {license.expiresAt
-                          ? new Date(license.expiresAt).toLocaleDateString()
-                          : t.noExpirationLabel}
-                      </span>
                     </div>
                   </div>
                 </div>

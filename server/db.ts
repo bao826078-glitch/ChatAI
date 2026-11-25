@@ -399,6 +399,16 @@ class DatabaseManager {
 
   private ensureInitialDefaults(): void {
     const now = new Date().toISOString();
+    const instanceIdFile = path.join(this.getDbDir(), 'secrets', 'instance.id');
+    let persistedInstanceId = '';
+    try {
+      if (fs.existsSync(instanceIdFile)) {
+        persistedInstanceId = fs.readFileSync(instanceIdFile, 'utf-8').trim();
+      }
+    } catch {
+      // ignore
+    }
+
     const defaults: Record<string, string> = {
       language: 'en',
       theme: 'dark',
@@ -409,7 +419,7 @@ class DatabaseManager {
       default_model: '',
       send_on_enter: 'true',
       compact_mode: 'false',
-      instance_id: hashIdentifier(crypto.randomUUID()),
+      instance_id: persistedInstanceId || hashIdentifier(crypto.randomUUID()),
     };
 
     for (const [k, v] of Object.entries(defaults)) {
@@ -417,6 +427,22 @@ class DatabaseManager {
       if (!existing) {
         this.run('INSERT INTO user_settings (key, value, updated_at) VALUES (?, ?, ?)', [k, v, now]);
       }
+    }
+
+    // Sync instance_id to secrets/instance.id so it survives DB deletion
+    try {
+      const activeInstanceId = this.queryOne<{ value: string }>(
+        "SELECT value FROM user_settings WHERE key = 'instance_id'"
+      )?.value;
+      if (activeInstanceId && !persistedInstanceId) {
+        const secretsDir = path.join(this.getDbDir(), 'secrets');
+        if (!fs.existsSync(secretsDir)) {
+          fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+        }
+        fs.writeFileSync(instanceIdFile, activeInstanceId, { mode: 0o600 });
+      }
+    } catch {
+      // ignore
     }
 
     const licenseRow = this.queryOne<{ id: string }>('SELECT id FROM license_state WHERE id = ?', ['primary']);
@@ -539,12 +565,35 @@ class DatabaseManager {
   public getInstanceId(): string {
     const existing = this.getUserSetting('instance_id');
     if (existing) return existing;
-    const generated = hashIdentifier(crypto.randomUUID());
+
+    const instanceIdFile = path.join(this.getDbDir(), 'secrets', 'instance.id');
+    let persisted = '';
+    try {
+      if (fs.existsSync(instanceIdFile)) {
+        persisted = fs.readFileSync(instanceIdFile, 'utf-8').trim();
+      }
+    } catch {
+      // ignore
+    }
+
+    const generated = persisted || hashIdentifier(crypto.randomUUID());
     this.run('INSERT OR REPLACE INTO user_settings (key, value, updated_at) VALUES (?, ?, ?)', [
       'instance_id',
       generated,
       new Date().toISOString(),
     ]);
+
+    if (!persisted) {
+      try {
+        const secretsDir = path.join(this.getDbDir(), 'secrets');
+        if (!fs.existsSync(secretsDir)) {
+          fs.mkdirSync(secretsDir, { recursive: true, mode: 0o700 });
+        }
+        fs.writeFileSync(instanceIdFile, generated, { mode: 0o600 });
+      } catch {
+        // ignore
+      }
+    }
     return generated;
   }
 

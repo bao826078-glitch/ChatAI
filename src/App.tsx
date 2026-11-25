@@ -68,12 +68,12 @@ const DEFAULT_LICENSE: LicenseInfo = {
 const DEFAULT_QUOTA: QuotaInfo = {
   plan: 'free',
   dateKey: new Date().toISOString().slice(0, 10),
-  chatLimit: 20,
+  chatLimit: 2000,
   chatUsed: 0,
-  chatRemaining: 20,
-  tokenLimit: 50000,
+  chatRemaining: 2000,
+  tokenLimit: 2000000,
   tokenUsed: 0,
-  tokenRemaining: 50000,
+  tokenRemaining: 2000000,
   nearLimit: false,
   limitReached: false,
   resetAt: new Date().toISOString(),
@@ -81,14 +81,38 @@ const DEFAULT_QUOTA: QuotaInfo = {
 
 function makeEmptyConversation(lang: AppLanguage, model = '', provider?: ApiProvider): Conversation {
   const now = Date.now();
+  const suffix = Math.random().toString(36).slice(2, 6);
   return {
-    id: `chat-${now}`,
+    id: `chat-${now}-${suffix}`,
     title: lang === 'vi' ? 'Đoạn chat mới' : 'New chat',
     createdAt: now,
     updatedAt: now,
     messages: [],
     model,
     provider,
+  };
+}
+
+function parseSqliteMessage(m: any): Message {
+  let meta: any = {};
+  if (m.metadata && typeof m.metadata === 'string') {
+    try {
+      meta = JSON.parse(m.metadata);
+    } catch {
+      meta = {};
+    }
+  } else if (m.metadata && typeof m.metadata === 'object') {
+    meta = m.metadata;
+  }
+  const tokens = typeof meta.totalTokens === 'number' && meta.totalTokens > 0 ? meta.totalTokens : estimateTokens(m.content || '');
+  return {
+    id: m.id,
+    sender: m.sender || (m.role === 'user' ? 'user' : 'ai'),
+    role: m.role || 'user',
+    content: m.content || '',
+    timestamp: new Date(m.created_at).getTime(),
+    modelUsed: typeof meta.modelUsed === 'string' && meta.modelUsed ? meta.modelUsed : undefined,
+    estimatedTokens: tokens,
   };
 }
 
@@ -114,7 +138,6 @@ export default function App() {
   const [quota, setQuota] = useState<QuotaInfo>(DEFAULT_QUOTA);
   const [keyStatus, setKeyStatus] = useState<MasterKeyStatus | null>(null);
   const [welcomeDismissed, setWelcomeDismissed] = useState<boolean>(false);
-  const [forceShowWelcome, setForceShowWelcome] = useState<boolean>(false);
 
   const [conversations, setConversations] = useState<Conversation[]>(() => [
     makeEmptyConversation(getStoredLanguage()),
@@ -151,9 +174,9 @@ export default function App() {
   );
 
   const hasReadyProvider = Boolean(
-    activeProvider?.hasApiKey ||
-      providers.some((p) => p.hasApiKey) ||
-      (hasDefaultEnvKey && (!activeProvider || activeProvider.type === 'google'))
+    activeProvider
+      ? activeProvider.hasApiKey || (hasDefaultEnvKey && activeProvider.type === 'google')
+      : hasDefaultEnvKey || providers.some((p) => p.hasApiKey)
   );
 
   const persistUserSettings = useCallback(async (patch: Record<string, string>) => {
@@ -185,11 +208,12 @@ export default function App() {
   );
 
   const refreshModels = useCallback(
-    async (providerIdOverride?: string, preferredModel?: string) => {
-      const targetId = providerIdOverride || activeProviderId || activeProvider?.id || '';
+    async (providerIdOverride?: string, preferredModel?: string): Promise<{ ok: boolean; error?: string; count?: number }> => {
+      const targetId = providerIdOverride !== undefined ? providerIdOverride : (activeProviderId || activeProvider?.id || '');
       if (!targetId && !hasDefaultEnvKey) {
         setModels([]);
-        return;
+        setSelectedModel('');
+        return { ok: true, count: 0 };
       }
 
       setIsFetchingModels(true);
@@ -202,24 +226,36 @@ export default function App() {
           }),
         });
         const data = await res.json();
-        if (data.ok && Array.isArray(data.models)) {
-          setModels(data.models);
-          const candidateModel = preferredModel ?? selectedModel;
-          if (data.models.length > 0) {
-            if (!candidateModel || !data.models.some((m: ModelOption) => m.id === candidateModel)) {
-              setSelectedModel(data.models[0].id);
+        const modelList: ModelOption[] = Array.isArray(data.models) ? data.models : [];
+
+        if (data.ok || modelList.length > 0) {
+          setModels(modelList);
+          const candidateModel = preferredModel !== undefined ? preferredModel : selectedModel;
+          if (modelList.length > 0) {
+            if (!candidateModel || !modelList.some((m: ModelOption) => m.id === candidateModel)) {
+              const firstModel = modelList[0].id;
+              setSelectedModel(firstModel);
+              void persistUserSettings({ default_model: firstModel });
             }
+          } else {
+            setSelectedModel('');
+            void persistUserSettings({ default_model: '' });
           }
-        } else {
-          setModels([]);
+          return { ok: Boolean(data.ok), error: data.error, count: modelList.length };
         }
-      } catch (err) {
+
+        setModels([]);
+        setSelectedModel('');
+        void persistUserSettings({ default_model: '' });
+        return { ok: false, error: data.error || 'Failed to fetch models.' };
+      } catch (err: any) {
         console.warn('Model fetch note:', err);
+        return { ok: false, error: err?.message || 'Failed to fetch models.' };
       } finally {
         setIsFetchingModels(false);
       }
     },
-    [activeProviderId, activeProvider?.id, hasDefaultEnvKey, selectedModel]
+    [activeProviderId, activeProvider?.id, hasDefaultEnvKey, selectedModel, persistUserSettings]
   );
 
   // Bootstrap session, settings, providers, license, quota, and SQLite conversations
@@ -333,7 +369,7 @@ export default function App() {
               }),
             });
             const modData = await modRes.json();
-            if (!cancelled && modData.ok && Array.isArray(modData.models)) {
+            if (!cancelled && Array.isArray(modData.models) && (modData.ok || modData.models.length > 0)) {
               setModels(modData.models);
               if (modData.models.length > 0) {
                 const chosen =
@@ -365,14 +401,7 @@ export default function App() {
             updatedAt: new Date(c.updated_at).getTime(),
             messages:
               c.id === firstId && detail.ok && Array.isArray(detail.messages)
-                ? detail.messages.map((m: any) => ({
-                    id: m.id,
-                    sender: m.sender || (m.role === 'user' ? 'user' : 'ai'),
-                    role: m.role || 'user',
-                    content: m.content,
-                    timestamp: new Date(m.created_at).getTime(),
-                    estimatedTokens: estimateTokens(m.content),
-                  }))
+                ? detail.messages.map(parseSqliteMessage)
                 : [],
             model: c.model || '',
             provider: c.provider || 'openai',
@@ -406,14 +435,7 @@ export default function App() {
                     updatedAt: new Date(c.updated_at).getTime(),
                     messages:
                       c.id === firstId && dData.ok && Array.isArray(dData.messages)
-                        ? dData.messages.map((m: any) => ({
-                            id: m.id,
-                            sender: m.sender || (m.role === 'user' ? 'user' : 'ai'),
-                            role: m.role || 'user',
-                            content: m.content,
-                            timestamp: new Date(m.created_at).getTime(),
-                            estimatedTokens: estimateTokens(m.content),
-                          }))
+                        ? dData.messages.map(parseSqliteMessage)
                         : [],
                     model: c.model || '',
                     provider: c.provider || 'openai',
@@ -491,7 +513,7 @@ export default function App() {
     if (!data.ok) return { ok: false, error: data.error };
 
     setProviders(data.providers || []);
-    if (data.provider && (data.provider.isDefault || providers.length === 0)) {
+    if (data.provider && (data.provider.isDefault || providers.length === 0 || (!activeProvider?.hasApiKey && data.provider.hasApiKey))) {
       setActiveProviderId(data.provider.id);
       await persistUserSettings({ active_provider_id: data.provider.id });
       await refreshModels(data.provider.id);
@@ -518,8 +540,8 @@ export default function App() {
     if (!data.ok) return { ok: false, error: data.error };
 
     setProviders(data.providers || []);
-    if (id === activeProviderId || data.provider?.isDefault) {
-      if (data.provider?.isDefault) {
+    if (id === activeProviderId || data.provider?.isDefault || (!activeProvider?.hasApiKey && data.provider?.hasApiKey)) {
+      if (data.provider?.isDefault || (!activeProvider?.hasApiKey && data.provider?.hasApiKey)) {
         setActiveProviderId(data.provider.id);
         await persistUserSettings({ active_provider_id: data.provider.id });
       }
@@ -593,52 +615,68 @@ export default function App() {
   // ==================== LICENSE & WELCOME HANDLERS ====================
 
   const handleActivateLicense = async (licenseKey: string) => {
-    const res = await apiFetch('/api/license/activate', {
-      method: 'POST',
-      body: JSON.stringify({ licenseKey }),
-    });
-    const data = await res.json();
-    if (data.license) setLicense(data.license);
-    if (data.quota) setQuota(data.quota);
-    if (data.ok) {
-      setWelcomeDismissed(true);
-      await persistUserSettings({ welcome_dismissed: 'true' });
+    try {
+      const res = await apiFetch('/api/license/activate', {
+        method: 'POST',
+        body: JSON.stringify({ licenseKey }),
+      });
+      const data = await res.json();
+      if (data.license) setLicense(data.license);
+      if (data.quota) setQuota(data.quota);
+      if (data.ok) {
+        setWelcomeDismissed(true);
+        await persistUserSettings({ welcome_dismissed: 'true' });
+      }
+      return data;
+    } catch (err: any) {
+      return { ok: false, errorCode: 'KEYGATE_UNREACHABLE', errorMessage: err?.message || 'License activation failed.' };
     }
-    return data;
   };
 
   const handleVerifyLicense = async (licenseKey?: string) => {
-    const res = await apiFetch('/api/license/verify', {
-      method: 'POST',
-      body: JSON.stringify({ licenseKey }),
-    });
-    const data = await res.json();
-    if (data.license) setLicense(data.license);
-    if (data.quota) setQuota(data.quota);
-    return data;
+    try {
+      const res = await apiFetch('/api/license/verify', {
+        method: 'POST',
+        body: JSON.stringify({ licenseKey }),
+      });
+      const data = await res.json();
+      if (data.license) setLicense(data.license);
+      if (data.quota) setQuota(data.quota);
+      return data;
+    } catch (err: any) {
+      return { ok: false, errorCode: 'KEYGATE_UNREACHABLE', errorMessage: err?.message || 'License verification failed.' };
+    }
   };
 
   const handleDeactivateLicense = async () => {
-    const res = await apiFetch('/api/license/deactivate', {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
-    const data = await res.json();
-    if (data.license) setLicense(data.license);
-    if (data.quota) setQuota(data.quota);
-    return data;
+    try {
+      const res = await apiFetch('/api/license/deactivate', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (data.license) setLicense(data.license);
+      if (data.quota) setQuota(data.quota);
+      return data;
+    } catch (err: any) {
+      return { ok: false, error: err?.message || 'Failed to deactivate license.' };
+    }
   };
 
   const handleSkipWelcome = async () => {
-    const res = await apiFetch('/api/license/skip-welcome', {
-      method: 'POST',
-      body: JSON.stringify({}),
-    });
-    const data = await res.json();
-    if (data.license) setLicense(data.license);
-    if (data.quota) setQuota(data.quota);
-    setWelcomeDismissed(true);
-    setForceShowWelcome(false);
+    try {
+      const res = await apiFetch('/api/license/skip-welcome', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      });
+      const data = await res.json();
+      if (data.license) setLicense(data.license);
+      if (data.quota) setQuota(data.quota);
+    } catch (err) {
+      console.warn('Skip welcome note:', err);
+    } finally {
+      setWelcomeDismissed(true);
+    }
   };
 
   // ==================== MASTER KEY SECURITY HANDLERS ====================
@@ -700,14 +738,7 @@ export default function App() {
         const res = await apiFetch(`/api/conversations/${id}`);
         const data = await res.json();
         if (data.ok && Array.isArray(data.messages)) {
-          const msgs: Message[] = data.messages.map((m: any) => ({
-            id: m.id,
-            sender: m.sender || (m.role === 'user' ? 'user' : 'ai'),
-            role: m.role || 'user',
-            content: m.content,
-            timestamp: new Date(m.created_at).getTime(),
-            estimatedTokens: estimateTokens(m.content),
-          }));
+          const msgs: Message[] = data.messages.map(parseSqliteMessage);
           setConversations((prev) => prev.map((c) => (c.id === id ? { ...c, messages: msgs } : c)));
         }
       } catch (err) {
@@ -735,6 +766,7 @@ export default function App() {
 
   const handleClearCurrentChat = () => {
     if (!currentChat) return;
+    if (isStreaming) handleStopStreaming();
     apiFetch(`/api/conversations/${currentChat.id}`, { method: 'DELETE' }).catch(console.warn);
 
     const freshTitle = language === 'vi' ? 'Đoạn chat mới' : 'New chat';
@@ -754,6 +786,7 @@ export default function App() {
 
   const handleDeleteChat = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (isStreaming && id === currentChatId) handleStopStreaming();
     apiFetch(`/api/conversations/${id}`, { method: 'DELETE' }).catch(console.warn);
 
     if (conversations.length <= 1) {
@@ -778,6 +811,7 @@ export default function App() {
   };
 
   const handleClearAllChats = () => {
+    if (isStreaming) handleStopStreaming();
     conversations.forEach((c) => {
       apiFetch(`/api/conversations/${c.id}`, { method: 'DELETE' }).catch(console.warn);
     });
@@ -799,7 +833,7 @@ export default function App() {
 
   // ==================== CHAT STREAMING ====================
 
-  const handleSendMessage = async (text: string) => {
+  const handleSendMessage = async (text: string, messagesOverride?: Message[]) => {
     if (!currentChat || isStreaming) return;
 
     if (quota.limitReached) {
@@ -812,6 +846,7 @@ export default function App() {
       return;
     }
 
+    const baseMessages = messagesOverride ?? currentChat.messages;
     const timestampNow = Date.now();
     const inputEstimatedTokens = estimateTokens(text);
 
@@ -836,7 +871,7 @@ export default function App() {
       estimatedTokens: 0,
     };
 
-    const isFirstMessage = currentChat.messages.length === 0;
+    const isFirstMessage = baseMessages.length === 0;
     const computedTitle = isFirstMessage
       ? text.slice(0, 32) + (text.length > 32 ? '...' : '')
       : currentChat.title;
@@ -847,7 +882,7 @@ export default function App() {
           ? {
               ...c,
               title: computedTitle,
-              messages: [...c.messages, userMessage, placeholderAiMessage],
+              messages: [...baseMessages, userMessage, placeholderAiMessage],
               updatedAt: timestampNow,
               model: selectedModel,
               provider: activeProvider?.type,
@@ -863,7 +898,7 @@ export default function App() {
     let detectedErrorType = 'GENERAL_ERROR';
 
     try {
-      const historyPayload = currentChat.messages
+      const historyPayload = baseMessages
         .filter((m) => !m.error)
         .map((m) => ({
           role: m.sender === 'user' || m.role === 'user' ? 'user' : 'model',
@@ -916,8 +951,62 @@ export default function App() {
       let accumulatedText = '';
       let buffer = '';
       let realUsageTotal: number | null = null;
+      let streamCompleted = false;
 
-      while (true) {
+      const processSseLine = (rawLine: string): boolean => {
+        const trimmed = rawLine.trim();
+        if (!trimmed.startsWith('data:')) return false;
+
+        const dataStr = trimmed.slice(5).trim();
+        if (dataStr === '[DONE]') return true;
+        if (!dataStr) return false;
+
+        let parsed: any;
+        try {
+          parsed = JSON.parse(dataStr);
+        } catch {
+          return false;
+        }
+
+        if (parsed.error) {
+          detectedErrorType = parsed.errorType || parsed.errorCode || 'GENERAL_ERROR';
+          throw new Error(translateErrorCode(language, parsed.errorCode, parsed.error));
+        }
+
+        if (parsed.quota) {
+          setQuota(parsed.quota);
+        }
+
+        if (parsed.usage && parsed.usage.totalTokens > 0) {
+          realUsageTotal = parsed.usage.totalTokens;
+        }
+
+        if (parsed.text) {
+          accumulatedText += parsed.text;
+          setConversations((prev) =>
+            prev.map((c) =>
+              c.id === currentChat.id
+                ? {
+                    ...c,
+                    messages: c.messages.map((m) =>
+                      m.id === aiMessageId
+                        ? {
+                            ...m,
+                            content: accumulatedText,
+                            isStreaming: true,
+                            estimatedTokens: realUsageTotal || estimateTokens(accumulatedText),
+                          }
+                        : m
+                    ),
+                  }
+                : c
+            )
+          );
+        }
+        return false;
+      };
+
+      while (!streamCompleted) {
         const { value, done } = await reader.read();
         if (done) break;
 
@@ -926,55 +1015,19 @@ export default function App() {
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data: ')) continue;
-
-          const dataStr = trimmed.slice(6);
-          if (dataStr === '[DONE]') break;
-
-          let parsed: any;
-          try {
-            parsed = JSON.parse(dataStr);
-          } catch {
-            continue;
-          }
-
-          if (parsed.error) {
-            detectedErrorType = parsed.errorType || parsed.errorCode || 'GENERAL_ERROR';
-            throw new Error(translateErrorCode(language, parsed.errorCode, parsed.error));
-          }
-
-          if (parsed.quota) {
-            setQuota(parsed.quota);
-          }
-
-          if (parsed.usage && parsed.usage.totalTokens > 0) {
-            realUsageTotal = parsed.usage.totalTokens;
-          }
-
-          if (parsed.text) {
-            accumulatedText += parsed.text;
-            setConversations((prev) =>
-              prev.map((c) =>
-                c.id === currentChat.id
-                  ? {
-                      ...c,
-                      messages: c.messages.map((m) =>
-                        m.id === aiMessageId
-                          ? {
-                              ...m,
-                              content: accumulatedText,
-                              isStreaming: true,
-                              estimatedTokens: realUsageTotal || estimateTokens(accumulatedText),
-                            }
-                          : m
-                      ),
-                    }
-                  : c
-              )
-            );
+          if (processSseLine(line)) {
+            streamCompleted = true;
+            break;
           }
         }
+      }
+
+      if (!streamCompleted && buffer.trim()) {
+        processSseLine(buffer);
+      }
+
+      if (!accumulatedText.trim()) {
+        throw new Error(translateErrorCode(language, 'EMPTY_PROVIDER_RESPONSE'));
       }
 
       const finalTokens = realUsageTotal || estimateTokens(accumulatedText);
@@ -1049,10 +1102,11 @@ export default function App() {
     const userMsgIndex = msgs.length - 2;
     if (userMsgIndex >= 0) {
       const userMsg = msgs[userMsgIndex];
+      const priorMessages = msgs.slice(0, userMsgIndex);
       setConversations((prev) =>
-        prev.map((c) => (c.id === currentChat.id ? { ...c, messages: c.messages.slice(0, userMsgIndex) } : c))
+        prev.map((c) => (c.id === currentChat.id ? { ...c, messages: priorMessages } : c))
       );
-      void handleSendMessage(userMsg.content);
+      void handleSendMessage(userMsg.content, priorMessages);
     }
   };
 
@@ -1100,7 +1154,7 @@ export default function App() {
 
   // Dedicated Welcome Screen on first launch when no active Community license is present
   const isCommunityActive = license.plan === 'community' && license.status === 'active';
-  const showWelcomeScreen = forceShowWelcome || (!welcomeDismissed && !isCommunityActive);
+  const showWelcomeScreen = !welcomeDismissed && !isCommunityActive;
 
   if (showWelcomeScreen) {
     return (
@@ -1113,7 +1167,6 @@ export default function App() {
         onSkip={handleSkipWelcome}
         onContinueToApp={() => {
           setWelcomeDismissed(true);
-          setForceShowWelcome(false);
         }}
       />
     );
@@ -1360,10 +1413,6 @@ export default function App() {
         onActivateLicense={handleActivateLicense}
         onVerifyLicense={handleVerifyLicense}
         onDeactivateLicense={handleDeactivateLicense}
-        onOpenWelcomeScreen={() => {
-          setIsSettingsOpen(false);
-          setForceShowWelcome(true);
-        }}
         keyStatus={keyStatus}
         onRefreshKeyStatus={handleRefreshKeyStatus}
         onBackupMasterKey={handleBackupMasterKey}

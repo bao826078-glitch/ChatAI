@@ -87,7 +87,7 @@ const securityRateLimit = createRateLimiter('security', 15, 60_000);
 // ==================== SECURITY: URL & PATH VALIDATION ====================
 
 function validateExternalProviderUrl(rawUrl: string): { valid: boolean; normalized: string; error?: string } {
-  const trimmed = (rawUrl || '').trim();
+  const trimmed = (rawUrl || '').replace(/\s+/g, '');
   if (!trimmed) return { valid: true, normalized: '' };
 
   try {
@@ -117,14 +117,137 @@ function validateExternalProviderUrl(rawUrl: string): { valid: boolean; normaliz
   }
 }
 
+function sanitizeApiKey(raw?: string): string {
+  if (!raw || typeof raw !== 'string') return '';
+  let cleaned = raw
+    .replace(/[\u200B-\u200D\uFEFF]/g, '')
+    .replace(/[\r\n\t]+/g, '')
+    .trim();
+  if (
+    (cleaned.startsWith('"') && cleaned.endsWith('"') && cleaned.length >= 2) ||
+    (cleaned.startsWith("'") && cleaned.endsWith("'") && cleaned.length >= 2)
+  ) {
+    cleaned = cleaned.slice(1, -1).trim();
+  }
+  if (/^bearer\s+/i.test(cleaned)) {
+    cleaned = cleaned.replace(/^bearer\s+/i, '').trim();
+  }
+  return cleaned;
+}
+
 function validateCustomEndpointPath(rawEndpoint: string): { valid: boolean; normalized: string; error?: string } {
-  const trimmed = (rawEndpoint || '').trim();
-  if (!trimmed) return { valid: true, normalized: '' };
-  if (trimmed.includes('://') || trimmed.includes('@') || trimmed.includes('\\') || trimmed.includes('..')) {
+  const compact = (rawEndpoint || '').replace(/[\u200B-\u200D\uFEFF\s]+/g, '');
+  if (!compact) return { valid: true, normalized: '' };
+  if (compact.includes('://') || compact.includes('@') || compact.includes('\\') || compact.includes('..')) {
     return { valid: false, normalized: '', error: 'Invalid API endpoint path.' };
   }
-  const normalized = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  const collapsed = compact.replace(/\/{2,}/g, '/').replace(/\/+$/, '');
+  if (!collapsed) return { valid: true, normalized: '' };
+  const normalized = collapsed.startsWith('/') ? collapsed : `/${collapsed}`;
   return { valid: true, normalized };
+}
+
+function isBaseVersionPrefix(segmentPath: string): boolean {
+  return /^(\/api)?(\/openai)?(\/v\d+(?:alpha|beta)?|\/api)$/i.test(segmentPath);
+}
+
+function resolveProviderUrlAndEndpoint(
+  provider: ApiProviderType,
+  rawBaseUrl: string,
+  rawEndpointPath: string,
+  defaultEndpointPath: string
+): { modelsBase: string; chatUrl: string; endpointPath: string } {
+  let cleanBase =
+    getTargetBaseUrl(provider, rawBaseUrl) ||
+    (provider === '9router'
+      ? DEFAULT_9ROUTER_BASE_URL
+      : provider === 'claude'
+      ? DEFAULT_ANTHROPIC_BASE_URL
+      : DEFAULT_OPENAI_BASE_URL);
+
+  cleanBase = cleanBase.replace(/\/+$/, '');
+
+  // Extract leaf endpoint if user pasted full chat path inside Base URL
+  let baseLeafEndpoint = '';
+  for (const leaf of ['/chat/completions', '/messages', '/responses']) {
+    if (cleanBase.toLowerCase().endsWith(leaf)) {
+      baseLeafEndpoint = cleanBase.slice(cleanBase.length - leaf.length);
+      cleanBase = cleanBase.slice(0, cleanBase.length - leaf.length);
+      break;
+    }
+  }
+
+  let endpointPath = (rawEndpointPath || '')
+    .replace(/[\u200B-\u200D\uFEFF\s]+/g, '')
+    .replace(/\/{2,}/g, '/')
+    .replace(/\/+$/, '');
+
+  if (!endpointPath) {
+    const finalLeaf = baseLeafEndpoint || defaultEndpointPath;
+    return {
+      modelsBase: cleanBase,
+      chatUrl: `${cleanBase}${finalLeaf}`,
+      endpointPath: finalLeaf,
+    };
+  }
+
+  endpointPath = endpointPath.startsWith('/') ? endpointPath : `/${endpointPath}`;
+
+  // Avoid duplicate version prefix when Base URL already ends with the same prefix (e.g. .../v1 + /v1 or /v1/chat/completions)
+  for (const prefix of ['/openai/v1', '/api/v1', '/v1beta', '/v1', '/v2', '/api']) {
+    if (cleanBase.toLowerCase().endsWith(prefix)) {
+      if (endpointPath.toLowerCase() === prefix) {
+        endpointPath = '';
+        break;
+      }
+      if (endpointPath.toLowerCase().startsWith(`${prefix}/`)) {
+        endpointPath = endpointPath.slice(prefix.length);
+        break;
+      }
+    }
+  }
+
+  // If user put a version/API prefix (e.g. "/v1") into Endpoint Path, append default leaf path (e.g. "/chat/completions")
+  if (!endpointPath || isBaseVersionPrefix(endpointPath)) {
+    const modelsBase = endpointPath ? `${cleanBase}${endpointPath}` : cleanBase;
+    const finalLeaf = baseLeafEndpoint || defaultEndpointPath;
+    return {
+      modelsBase,
+      chatUrl: `${modelsBase}${finalLeaf}`,
+      endpointPath: `${endpointPath}${finalLeaf}`,
+    };
+  }
+
+  const chatUrl = `${cleanBase}${endpointPath}`;
+  let modelsBase = cleanBase;
+  for (const leaf of ['/chat/completions', '/messages', '/responses', '/chat']) {
+    if (endpointPath.toLowerCase().endsWith(leaf)) {
+      const prefixBeforeLeaf = endpointPath.slice(0, endpointPath.length - leaf.length);
+      modelsBase = prefixBeforeLeaf ? `${cleanBase}${prefixBeforeLeaf}` : cleanBase;
+      break;
+    }
+  }
+
+  return {
+    modelsBase,
+    chatUrl,
+    endpointPath,
+  };
+}
+
+function safeUrlForLog(rawUrl: string): string {
+  try {
+    const u = new URL(rawUrl);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return '[invalid-url]';
+  }
+}
+
+function resolveGoogleBaseUrl(rawBaseUrl?: string): string {
+  const clean = (rawBaseUrl || '').trim().replace(/\/+$/, '');
+  if (!clean) return 'https://generativelanguage.googleapis.com';
+  return clean.replace(/\/v1beta$/i, '').replace(/\/v1$/i, '');
 }
 
 function classifyMasterKeyError(error: any): {
@@ -227,10 +350,8 @@ async function requireCommunityAnalytics(req: Request, res: Response, next: Next
 
 // ==================== AI CLIENT HELPERS ====================
 
-function getGoogleAIClient(customApiKey?: string): GoogleGenAI {
-  const apiKey = customApiKey && customApiKey.trim().length > 0
-    ? customApiKey.trim()
-    : process.env.GEMINI_API_KEY;
+function getGoogleAIClient(customApiKey?: string, customBaseUrl?: string): GoogleGenAI {
+  const apiKey = customApiKey ? sanitizeApiKey(customApiKey) : sanitizeApiKey(process.env.GEMINI_API_KEY);
 
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     const err: any = new Error('No API Key provided. Please enter a valid API Key to proceed.');
@@ -238,36 +359,49 @@ function getGoogleAIClient(customApiKey?: string): GoogleGenAI {
     throw err;
   }
 
+  const httpOptions: any = {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    },
+  };
+  if (customBaseUrl && customBaseUrl.trim()) {
+    httpOptions.baseUrl = resolveGoogleBaseUrl(customBaseUrl);
+  }
+
   return new GoogleGenAI({
     apiKey,
-    httpOptions: {
-      headers: {
-        'User-Agent': 'aistudio-build',
-      },
-    },
+    httpOptions,
   });
 }
 
-function classifyError(error: any): { isApiKeyError: boolean; errorCode: string; friendlyMessage: string } {
-  const rawMsg = (error?.message || '').toLowerCase();
-  const status = error?.status || error?.statusCode;
-
-  if (
+function isExplicitApiKeyErrorMessage(rawMsg: string): boolean {
+  return (
     rawMsg.includes('api_key_invalid') ||
     rawMsg.includes('api key not valid') ||
     rawMsg.includes('api key expired') ||
-    rawMsg.includes('unauthenticated') ||
-    rawMsg.includes('permission_denied') ||
-    rawMsg.includes('authentication_error') ||
     rawMsg.includes('invalid_api_key') ||
     rawMsg.includes('invalid x-api-key') ||
     rawMsg.includes('key has expired') ||
     rawMsg.includes('invalid api key') ||
-    rawMsg.includes('invalid_argument') ||
     rawMsg.includes('incorrect api key') ||
-    status === 400 ||
+    rawMsg.includes('authentication_error') ||
+    rawMsg.includes('unauthenticated') ||
+    rawMsg.includes('unauthorized') ||
+    rawMsg.includes('invalid token') ||
+    rawMsg.includes('api key is required') ||
+    rawMsg.includes('missing bearer')
+  );
+}
+
+function classifyError(error: any): { isApiKeyError: boolean; errorCode: string; friendlyMessage: string } {
+  const rawMessageText = String(error?.message || '').trim();
+  const rawMsg = rawMessageText.toLowerCase();
+  const status = error?.status || error?.statusCode;
+
+  if (
+    isExplicitApiKeyErrorMessage(rawMsg) ||
     status === 401 ||
-    status === 403
+    (status === 403 && !rawMsg.includes('quota') && !rawMsg.includes('region') && !rawMsg.includes('country') && !rawMsg.includes('model'))
   ) {
     return {
       isApiKeyError: true,
@@ -278,24 +412,38 @@ function classifyError(error: any): { isApiKeyError: boolean; errorCode: string;
 
   if (rawMsg.includes('resource_exhausted') || rawMsg.includes('quota') || rawMsg.includes('rate limit') || status === 429) {
     return {
-      isApiKeyError: true,
+      isApiKeyError: false,
       errorCode: 'PROVIDER_QUOTA_EXHAUSTED',
-      friendlyMessage: 'Provider API key rate limit or quota exceeded.',
+      friendlyMessage: rawMessageText || 'Provider API key rate limit or quota exceeded.',
     };
   }
 
-  if (rawMsg.includes('not_found') || rawMsg.includes('404') || rawMsg.includes('no longer available') || status === 404) {
+  if (
+    status === 404 ||
+    (rawMsg.includes('not_found') && rawMsg.includes('model')) ||
+    rawMsg.includes('model not found') ||
+    rawMsg.includes('does not exist') ||
+    rawMsg.includes('no longer available')
+  ) {
     return {
       isApiKeyError: false,
       errorCode: 'MODEL_NOT_FOUND',
-      friendlyMessage: 'Selected AI model is unavailable or not found.',
+      friendlyMessage: rawMessageText || 'Selected AI model is unavailable or not found.',
+    };
+  }
+
+  if (status === 400 || status === 422) {
+    return {
+      isApiKeyError: false,
+      errorCode: 'PROVIDER_REQUEST_ERROR',
+      friendlyMessage: rawMessageText || 'Provider rejected request parameters or selected model.',
     };
   }
 
   return {
     isApiKeyError: false,
     errorCode: 'PROVIDER_CONNECTION_ERROR',
-    friendlyMessage: error?.message || 'Failed to connect to AI provider.',
+    friendlyMessage: rawMessageText || 'Failed to connect to AI provider.',
   };
 }
 
@@ -328,12 +476,88 @@ function estimateTextTokens(text: string): number {
   }
 }
 
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 12000): Promise<globalThis.Response> {
+  const controller = new AbortController();
+  const externalSignal = init.signal;
+  if (externalSignal?.aborted) {
+    controller.abort(externalSignal.reason);
+  }
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
+  externalSignal?.addEventListener('abort', onExternalAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener('abort', onExternalAbort);
+  }
+}
+
+async function fetchWithSafeRedirects(
+  url: string,
+  init: RequestInit = {},
+  timeoutMs = 15000,
+  maxRedirects = 2
+): Promise<globalThis.Response> {
+  let currentUrl = url;
+  let currentInit: RequestInit = { ...init, redirect: 'manual' };
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const res = await fetchWithTimeout(currentUrl, currentInit, timeoutMs);
+    if (res.status < 300 || res.status >= 400) {
+      return res;
+    }
+
+    const location = res.headers.get('location');
+    if (!location) {
+      return res;
+    }
+
+    let nextUrl = '';
+    try {
+      nextUrl = new URL(location, currentUrl).toString();
+    } catch {
+      const err: any = new Error('Provider returned an invalid redirect location.');
+      err.code = 'REDIRECT_BLOCKED';
+      throw err;
+    }
+
+    const check = validateExternalProviderUrl(nextUrl);
+    if (!check.valid) {
+      const err: any = new Error(check.error || 'Redirect target blocked by security policy.');
+      err.code = 'REDIRECT_BLOCKED';
+      throw err;
+    }
+
+    currentUrl = nextUrl;
+    if (res.status !== 307 && res.status !== 308 && currentInit.method && currentInit.method !== 'GET' && currentInit.method !== 'HEAD') {
+      currentInit = { ...currentInit, method: 'GET', body: undefined };
+    }
+  }
+
+  const err: any = new Error('Too many HTTP redirects from AI provider.');
+  err.code = 'REDIRECT_BLOCKED';
+  throw err;
+}
+
+function parseProviderErrorBody(rawText: string): string {
+  if (!rawText) return '';
+  try {
+    const parsed = JSON.parse(rawText);
+    return String(parsed?.error?.message || parsed?.message || parsed?.detail || rawText);
+  } catch {
+    return rawText;
+  }
+}
+
 async function testProviderCredentials(params: {
   provider: ApiProviderType;
   apiKey: string;
   baseUrl?: string;
+  apiEndpoint?: string;
+  providerId?: string;
 }): Promise<{ ok: boolean; count?: number; errorType?: string; error?: string; message?: string }> {
-  const keyToTest = (params.apiKey || '').trim();
+  const keyToTest = sanitizeApiKey(params.apiKey);
   if (!keyToTest) {
     return {
       ok: false,
@@ -351,92 +575,264 @@ async function testProviderCredentials(params: {
     };
   }
 
-  if (params.provider === 'google') {
-    const googleUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(keyToTest)}`;
-    const response = await fetch(googleUrl, { redirect: 'manual' });
-    if (response.status >= 300 && response.status < 400) {
-      return { ok: false, errorType: 'REDIRECT_BLOCKED', error: 'Redirects are disallowed for security.' };
+  const endpointValidation = validateCustomEndpointPath(params.apiEndpoint || '');
+  if (!endpointValidation.valid) {
+    return {
+      ok: false,
+      errorType: 'INVALID_URL',
+      error: endpointValidation.error || 'Invalid API endpoint path.',
+    };
+  }
+
+  try {
+    if (params.provider === 'google') {
+      const googleBase = resolveGoogleBaseUrl(urlValidation.normalized);
+      const googleUrl = `${googleBase}/v1beta/models?key=${encodeURIComponent(keyToTest)}`;
+      const response = await fetchWithSafeRedirects(googleUrl);
+      if (response.status >= 300 && response.status < 400) {
+        return { ok: false, errorType: 'REDIRECT_BLOCKED', error: 'Redirects are disallowed for security.' };
+      }
+      if (response.ok) {
+        const data = await response.json();
+        const count = Array.isArray(data?.models) ? data.models.length : 0;
+        return {
+          ok: true,
+          count,
+          message: `Connected to Google AI Studio (${count} models available).`,
+        };
+      }
+      const errMsg = parseProviderErrorBody(await response.text());
+      const isAuthErr =
+        response.status === 401 ||
+        response.status === 403 ||
+        isExplicitApiKeyErrorMessage(errMsg.toLowerCase());
+      return {
+        ok: false,
+        errorType: isAuthErr ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
+        error: errMsg ? `${errMsg.slice(0, 140)} (HTTP ${response.status})` : `Google AI connection failed (HTTP ${response.status}).`,
+      };
     }
+
+    if (params.provider === 'claude') {
+      const { modelsBase, chatUrl } = resolveProviderUrlAndEndpoint(
+        'claude',
+        urlValidation.normalized,
+        endpointValidation.normalized,
+        '/messages'
+      );
+      let response = await fetchWithSafeRedirects(`${modelsBase}/models`, {
+        headers: {
+          'x-api-key': keyToTest,
+          'anthropic-version': '2023-06-01',
+        },
+      });
+      if (response.status === 404 && !modelsBase.endsWith('/v1') && !modelsBase.endsWith('/v1beta')) {
+        const v1Res = await fetchWithSafeRedirects(`${modelsBase}/v1/models`, {
+          headers: {
+            'x-api-key': keyToTest,
+            'anthropic-version': '2023-06-01',
+          },
+        });
+        if (v1Res.ok || v1Res.status === 401) {
+          response = v1Res;
+        }
+      }
+      if (response.ok) {
+        return {
+          ok: true,
+          message: 'Connected to Anthropic Claude successfully.',
+        };
+      }
+      if (response.status === 400 || response.status === 403 || response.status === 404 || response.status === 405 || response.status === 501) {
+        // Fallback probe on chat endpoint for Claude-compatible proxies without /models
+        const probeRes = await fetchWithSafeRedirects(chatUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': keyToTest,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-20250514',
+            max_tokens: 1,
+            messages: [{ role: 'user', content: 'hi' }],
+          }),
+        });
+        const probeRawText = await probeRes.text();
+        const probeBody = parseProviderErrorBody(probeRawText);
+        if (probeRes.ok) {
+          return { ok: true, message: 'Connected to Anthropic Claude endpoint successfully.' };
+        }
+        const isAuth =
+          probeRes.status === 401 ||
+          (probeRes.status === 403 && !probeBody.toLowerCase().includes('model')) ||
+          isExplicitApiKeyErrorMessage(probeBody.toLowerCase());
+        const looksJson = probeRawText.trim().startsWith('{');
+        if (!isAuth && looksJson && (probeRes.status === 400 || probeRes.status === 404 || probeRes.status === 422)) {
+          return {
+            ok: true,
+            message: 'API key authenticated with Claude endpoint. Select or add a model ID in AI Models.',
+          };
+        }
+        return {
+          ok: false,
+          errorType: isAuth ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
+          error: `Anthropic Claude connection failed (HTTP ${probeRes.status}). ${probeBody.slice(0, 120)}`,
+        };
+      }
+      const errText = parseProviderErrorBody(await response.text());
+      const isAuth =
+        response.status === 401 ||
+        response.status === 403 ||
+        isExplicitApiKeyErrorMessage(errText.toLowerCase());
+      return {
+        ok: false,
+        errorType: isAuth ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
+        error: `Anthropic Claude connection failed (HTTP ${response.status}). ${errText.slice(0, 120)}`,
+      };
+    }
+
+    const { modelsBase, chatUrl } = resolveProviderUrlAndEndpoint(
+      params.provider,
+      urlValidation.normalized,
+      endpointValidation.normalized,
+      '/chat/completions'
+    );
+
+    let response = await fetchWithSafeRedirects(`${modelsBase}/models`, {
+      headers: {
+        Authorization: `Bearer ${keyToTest}`,
+      },
+    });
+
+    // Fallback to <baseUrl>/v1/models when user omitted /v1
+    if ((response.status === 404 || response.status === 405) && !modelsBase.endsWith('/v1') && !modelsBase.endsWith('/v1beta')) {
+      const v1Res = await fetchWithSafeRedirects(`${modelsBase}/v1/models`, {
+        headers: {
+          Authorization: `Bearer ${keyToTest}`,
+        },
+      });
+      if (v1Res.ok || v1Res.status === 401 || v1Res.status === 403) {
+        response = v1Res;
+      }
+    }
+
     if (response.ok) {
       const data = await response.json();
-      const count = Array.isArray(data?.models) ? data.models.length : 0;
+      const list = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.models)
+        ? data.models
+        : Array.isArray(data)
+        ? data
+        : [];
       return {
         ok: true,
-        count,
-        message: `Connected to Google AI Studio (${count} models available).`,
+        count: list.length,
+        message: `Connection succeeded (${list.length} models discovered).`,
       };
+    }
+
+    const modelsErrRaw = await response.text();
+    const modelsErrText = parseProviderErrorBody(modelsErrRaw);
+
+    if (response.status === 401 || (response.status === 403 && isExplicitApiKeyErrorMessage(modelsErrText.toLowerCase()))) {
+      return {
+        ok: false,
+        errorType: 'INVALID_OR_EXPIRED_KEY',
+        error: `Authentication failed (HTTP ${response.status}). ${modelsErrText.slice(0, 120)}`,
+      };
+    }
+
+    // Some OpenAI-compatible gateways/proxies do not expose GET /models (return 400/403/404/405/501)
+    if (
+      response.status === 400 ||
+      response.status === 403 ||
+      response.status === 404 ||
+      response.status === 405 ||
+      response.status === 501
+    ) {
+      const customModels = params.providerId ? dbManager.listCustomModels(params.providerId) : [];
+      const probeModel = customModels[0]?.model_id || 'gpt-4o-mini';
+      const probeRes = await fetchWithSafeRedirects(chatUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${keyToTest}`,
+        },
+        body: JSON.stringify({
+          model: probeModel,
+          messages: [{ role: 'user', content: 'hi' }],
+          max_tokens: 1,
+          stream: false,
+        }),
+      });
+
+      if (probeRes.ok) {
+        return {
+          ok: true,
+          message: 'Connected to chat completion endpoint successfully.',
+        };
+      }
+
+      const probeBodyText = await probeRes.text();
+      const probeErr = parseProviderErrorBody(probeBodyText);
+      const isAuthErr =
+        probeRes.status === 401 ||
+        (probeRes.status === 403 && !probeErr.toLowerCase().includes('model') && !probeErr.toLowerCase().includes('quota')) ||
+        isExplicitApiKeyErrorMessage(probeErr.toLowerCase());
+
+      if (isAuthErr) {
+        return {
+          ok: false,
+          errorType: 'INVALID_OR_EXPIRED_KEY',
+          error: `Authentication failed (HTTP ${probeRes.status}). ${probeErr.slice(0, 120)}`,
+        };
+      }
+
+      // If endpoint returned a structured JSON request/model error (not an HTML 404), key auth succeeded
+      const looksJson = probeBodyText.trim().startsWith('{');
+      if (looksJson && (probeRes.status === 400 || probeRes.status === 404 || probeRes.status === 422)) {
+        return {
+          ok: true,
+          message: 'API key authenticated with endpoint. Add your model ID in the AI Models tab.',
+        };
+      }
+
+      return {
+        ok: false,
+        errorType: 'GENERAL_ERROR',
+        error: `Endpoint check failed (HTTP ${probeRes.status}). ${probeErr.slice(0, 120)}`,
+      };
+    }
+
+    const isAuth = isExplicitApiKeyErrorMessage(modelsErrText.toLowerCase());
+    return {
+      ok: false,
+      errorType: isAuth ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
+      error: `Provider connection failed (HTTP ${response.status}). ${modelsErrText.slice(0, 120)}`,
+    };
+  } catch (err: any) {
+    if (err?.code === 'REDIRECT_BLOCKED') {
+      return { ok: false, errorType: 'REDIRECT_BLOCKED', error: err.message };
     }
     return {
       ok: false,
-      errorType: 'INVALID_OR_EXPIRED_KEY',
-      error: `Invalid Google API key (HTTP ${response.status}).`,
+      errorType: 'GENERAL_ERROR',
+      error: err?.name === 'AbortError'
+        ? 'Connection to AI provider timed out.'
+        : (err?.message || 'Unable to connect to AI provider.'),
     };
   }
-
-  if (params.provider === 'claude') {
-    const cleanBase = getTargetBaseUrl('claude', urlValidation.normalized);
-    const response = await fetch(`${cleanBase}/models`, {
-      headers: {
-        'x-api-key': keyToTest,
-        'anthropic-version': '2023-06-01',
-      },
-      redirect: 'manual',
-    });
-    if (response.status >= 300 && response.status < 400) {
-      return { ok: false, errorType: 'REDIRECT_BLOCKED', error: 'Redirects are disallowed for security.' };
-    }
-    if (response.ok) {
-      return {
-        ok: true,
-        message: 'Connected to Anthropic Claude successfully.',
-      };
-    }
-    const errText = await response.text();
-    return {
-      ok: false,
-      errorType: 'INVALID_OR_EXPIRED_KEY',
-      error: `Anthropic Claude authentication failed (HTTP ${response.status}). ${errText.slice(0, 80)}`,
-    };
-  }
-
-  const cleanBase =
-    getTargetBaseUrl(params.provider, urlValidation.normalized) ||
-    (params.provider === '9router' ? DEFAULT_9ROUTER_BASE_URL : DEFAULT_OPENAI_BASE_URL);
-
-  const response = await fetch(`${cleanBase}/models`, {
-    headers: {
-      Authorization: `Bearer ${keyToTest}`,
-    },
-    redirect: 'manual',
-  });
-  if (response.status >= 300 && response.status < 400) {
-    return { ok: false, errorType: 'REDIRECT_BLOCKED', error: 'Redirects are disallowed for security.' };
-  }
-
-  if (response.ok) {
-    const data = await response.json();
-    const count = Array.isArray(data?.data) ? data.data.length : 0;
-    return {
-      ok: true,
-      count,
-      message: `Connection succeeded (${count} models discovered).`,
-    };
-  }
-
-  const errText = await response.text();
-  return {
-    ok: false,
-    errorType: 'INVALID_OR_EXPIRED_KEY',
-    error: `Provider connection failed (HTTP ${response.status}). ${errText.slice(0, 80)}`,
-  };
 }
 
 async function fetchProviderModelsList(params: {
   provider: ApiProviderType;
   apiKey: string;
   baseUrl?: string;
+  apiEndpoint?: string;
 }) {
-  const activeKey = (params.apiKey || '').trim();
+  const activeKey = sanitizeApiKey(params.apiKey);
   if (!activeKey) {
     return { ok: true, models: [], count: 0 };
   }
@@ -446,158 +842,203 @@ async function fetchProviderModelsList(params: {
     return { ok: false, models: [], error: urlValidation.error || 'Invalid Base URL.' };
   }
 
-  if (params.provider === 'google') {
-    const googleUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(activeKey)}`;
-    const response = await fetch(googleUrl, { redirect: 'manual' });
-    if (response.status >= 300 && response.status < 400) {
-      return { ok: false, models: [], error: 'Redirects are disallowed for security.' };
+  const endpointValidation = validateCustomEndpointPath(params.apiEndpoint || '');
+  if (!endpointValidation.valid) {
+    return { ok: false, models: [], error: endpointValidation.error || 'Invalid API endpoint path.' };
+  }
+
+  try {
+    if (params.provider === 'google') {
+      const googleBase = resolveGoogleBaseUrl(urlValidation.normalized);
+      const googleUrl = `${googleBase}/v1beta/models?key=${encodeURIComponent(activeKey)}`;
+      const response = await fetchWithSafeRedirects(googleUrl);
+      if (!response.ok) {
+        const errMsg = parseProviderErrorBody(await response.text());
+        return {
+          ok: false,
+          models: [],
+          error: errMsg ? `${errMsg.slice(0, 140)} (HTTP ${response.status})` : `Google AI models fetch failed (HTTP ${response.status}).`,
+        };
+      }
+      const data = await response.json();
+      const rawList: any[] = Array.isArray(data?.models) ? data.models : [];
+      const retiredModels = ['gemini-1.0-pro', 'gemini-pro', 'gemini-pro-vision'];
+      const nonTextKeywords = ['tts', 'imagen', 'veo', 'embedding', 'transcribe', 'robotics', 'aqa', 'bisheng'];
+      const supportedModels = rawList.filter((m: any) => {
+        const id = (m.name || '').replace(/^models\//, '').toLowerCase();
+        const methods: string[] = Array.isArray(m.supportedGenerationMethods) ? m.supportedGenerationMethods : [];
+        if (!methods.includes('generateContent')) return false;
+        if (retiredModels.includes(id)) return false;
+        if (nonTextKeywords.some((kw) => id.includes(kw))) return false;
+        return true;
+      });
+
+      const priorityOrder = [
+        'gemini-2.5-flash',
+        'gemini-2.5-pro',
+        'gemini-2.5-flash-lite',
+        'gemini-flash-latest',
+        'gemini-pro-latest',
+        'gemini-2.0-flash',
+        'gemini-3',
+      ];
+      supportedModels.sort((a: any, b: any) => {
+        const idA = (a.name || '').replace(/^models\//, '').toLowerCase();
+        const idB = (b.name || '').replace(/^models\//, '').toLowerCase();
+        const idxA = priorityOrder.findIndex((p) => idA.startsWith(p));
+        const idxB = priorityOrder.findIndex((p) => idB.startsWith(p));
+        if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+        if (idxA !== -1) return -1;
+        if (idxB !== -1) return 1;
+        return idA.localeCompare(idB);
+      });
+
+      const mapped = supportedModels.map((m: any) => {
+        const id = (m.name || '').replace(/^models\//, '');
+        return {
+          id,
+          name: m.displayName || id,
+          badge: 'Google',
+          description: m.description || `Google AI model: ${id}`,
+          provider: 'google',
+        };
+      });
+
+      return { ok: true, models: mapped, count: mapped.length };
     }
+
+    if (params.provider === 'claude') {
+      const { modelsBase } = resolveProviderUrlAndEndpoint(
+        'claude',
+        urlValidation.normalized,
+        endpointValidation.normalized,
+        '/messages'
+      );
+      let response = await fetchWithSafeRedirects(`${modelsBase}/models`, {
+        headers: {
+          'x-api-key': activeKey,
+          'anthropic-version': '2023-06-01',
+        },
+      });
+      if (response.status === 404 && !modelsBase.endsWith('/v1') && !modelsBase.endsWith('/v1beta')) {
+        const v1Res = await fetchWithSafeRedirects(`${modelsBase}/v1/models`, {
+          headers: {
+            'x-api-key': activeKey,
+            'anthropic-version': '2023-06-01',
+          },
+        });
+        if (v1Res.ok) response = v1Res;
+      }
+      if (!response.ok) {
+        const errMsg = parseProviderErrorBody(await response.text());
+        return {
+          ok: false,
+          models: [],
+          error: errMsg ? `${errMsg.slice(0, 140)} (HTTP ${response.status})` : `Unable to fetch Claude models (HTTP ${response.status}).`,
+        };
+      }
+      const data = await response.json();
+      const rawList: any[] = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data?.models)
+        ? data.models
+        : [];
+      const mapped = rawList.map((m: any) => ({
+        id: m.id,
+        name: m.display_name || m.id,
+        badge: 'Claude',
+        description: `Anthropic Claude: ${m.display_name || m.id}`,
+        provider: 'claude',
+      }));
+      return { ok: true, models: mapped, count: mapped.length };
+    }
+
+    const { modelsBase } = resolveProviderUrlAndEndpoint(
+      params.provider,
+      urlValidation.normalized,
+      endpointValidation.normalized,
+      '/chat/completions'
+    );
+
+    let response = await fetchWithSafeRedirects(`${modelsBase}/models`, {
+      headers: {
+        Authorization: `Bearer ${activeKey}`,
+      },
+    });
+
+    if ((response.status === 404 || response.status === 405) && !modelsBase.endsWith('/v1') && !modelsBase.endsWith('/v1beta')) {
+      const v1Res = await fetchWithSafeRedirects(`${modelsBase}/v1/models`, {
+        headers: {
+          Authorization: `Bearer ${activeKey}`,
+        },
+      });
+      if (v1Res.ok) {
+        response = v1Res;
+      }
+    }
+
     if (!response.ok) {
-      return { ok: false, models: [], error: `Google API key invalid or expired (HTTP ${response.status}).` };
+      const errMsg = parseProviderErrorBody(await response.text());
+      return {
+        ok: false,
+        models: [],
+        error: errMsg
+          ? `Unable to fetch models (HTTP ${response.status}): ${errMsg.slice(0, 120)}`
+          : `Unable to fetch models from provider (HTTP ${response.status}).`,
+      };
     }
+
     const data = await response.json();
-    const rawList: any[] = Array.isArray(data?.models) ? data.models : [];
-    const deprecatedModels = [
-      'gemini-2.5-flash',
-      'gemini-2.5-pro',
-      'gemini-2.0-flash',
-      'gemini-2.0-pro',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro',
-      'gemini-1.0-pro',
-    ];
-    const nonTextKeywords = ['tts', 'image', 'embedding', 'transcribe', 'robotics'];
-    const supportedModels = rawList.filter((m: any) => {
-      const id = (m.name || '').replace(/^models\//, '').toLowerCase();
-      const methods: string[] = Array.isArray(m.supportedGenerationMethods) ? m.supportedGenerationMethods : [];
-      if (!methods.includes('generateContent')) return false;
-      if (deprecatedModels.includes(id)) return false;
-      if (nonTextKeywords.some((kw) => id.includes(kw))) return false;
-      return true;
-    });
+    const rawList: any[] = Array.isArray(data?.data)
+      ? data.data
+      : Array.isArray(data?.models)
+      ? data.models
+      : Array.isArray(data)
+      ? data
+      : [];
+    let filteredList = rawList;
 
-    const priorityOrder = [
-      'gemini-3.8-flash',
-      'gemini-3.7-flash',
-      'gemini-3.6-flash',
-      'gemini-3.5-flash',
-      'gemini-flash-latest',
-      'gemini-3.1-flash-lite',
-      'gemini-flash-lite-latest',
-      'gemini-pro-latest',
-      'gemini-2.5-flash-lite',
-      'gemini-4-argon',
-    ];
-    supportedModels.sort((a: any, b: any) => {
-      const idA = (a.name || '').replace(/^models\//, '').toLowerCase();
-      const idB = (b.name || '').replace(/^models\//, '').toLowerCase();
-      const idxA = priorityOrder.findIndex((p) => idA.startsWith(p));
-      const idxB = priorityOrder.findIndex((p) => idB.startsWith(p));
-      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-      if (idxA !== -1) return -1;
-      if (idxB !== -1) return 1;
-      return idA.localeCompare(idB);
-    });
+    if (params.provider === 'openai') {
+      const nonChatKeywords = ['whisper', 'tts', 'embedding', 'moderation', 'dall-e', 'davinci', 'babbage', 'curie', 'realtime', 'transcribe'];
+      filteredList = rawList.filter((m: any) => {
+        const id = (typeof m === 'string' ? m : m.id || '').toLowerCase();
+        return !nonChatKeywords.some((kw) => id.includes(kw));
+      });
+      const priorityOrder = ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1', 'o1-mini', 'chatgpt-4o-latest', 'gpt-4.1', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'];
+      filteredList.sort((a: any, b: any) => {
+        const idA = (typeof a === 'string' ? a : a.id || '').toLowerCase();
+        const idB = (typeof b === 'string' ? b : b.id || '').toLowerCase();
+        const indexA = priorityOrder.findIndex((p) => idA.startsWith(p));
+        const indexB = priorityOrder.findIndex((p) => idB.startsWith(p));
+        if (indexA !== -1 && indexB !== -1) return indexA - indexB;
+        if (indexA !== -1) return -1;
+        if (indexB !== -1) return 1;
+        return idA.localeCompare(idB);
+      });
+    }
 
-    const mapped = supportedModels.map((m: any) => {
-      const id = (m.name || '').replace(/^models\//, '');
+    const badgeLabel = params.provider === 'openai' ? 'OpenAI' : params.provider === '9router' ? '9Router' : 'Custom';
+    const mappedModels = filteredList.map((m: any) => {
+      const id = typeof m === 'string' ? m : m.id || m.name;
       return {
         id,
-        name: m.displayName || id,
-        badge: 'Google',
-        description: m.description || `Google AI model: ${id}`,
-        provider: 'google',
+        name: m?.displayName || m?.display_name || id,
+        badge: badgeLabel,
+        description: m?.description || `AI Model: ${id}`,
+        provider: params.provider,
       };
     });
 
-    return { ok: true, models: mapped, count: mapped.length };
-  }
-
-  if (params.provider === 'claude') {
-    const cleanBase = getTargetBaseUrl('claude', urlValidation.normalized);
-    const response = await fetch(`${cleanBase}/models`, {
-      headers: {
-        'x-api-key': activeKey,
-        'anthropic-version': '2023-06-01',
-      },
-      redirect: 'manual',
-    });
-    if (response.status >= 300 && response.status < 400) {
-      return { ok: false, models: [], error: 'Redirects are disallowed for security.' };
-    }
-    if (!response.ok) {
-      return { ok: false, models: [], error: `Anthropic API key invalid (HTTP ${response.status}).` };
-    }
-    const data = await response.json();
-    const rawList: any[] = Array.isArray(data?.data) ? data.data : [];
-    const mapped = rawList.map((m: any) => ({
-      id: m.id,
-      name: m.display_name || m.id,
-      badge: 'Claude',
-      description: `Anthropic Claude: ${m.display_name || m.id}`,
-      provider: 'claude',
-    }));
-    return { ok: true, models: mapped, count: mapped.length };
-  }
-
-  const cleanBase =
-    getTargetBaseUrl(params.provider, urlValidation.normalized) ||
-    (params.provider === '9router' ? DEFAULT_9ROUTER_BASE_URL : DEFAULT_OPENAI_BASE_URL);
-
-  const response = await fetch(`${cleanBase}/models`, {
-    headers: {
-      Authorization: `Bearer ${activeKey}`,
-    },
-    redirect: 'manual',
-  });
-  if (response.status >= 300 && response.status < 400) {
-    return { ok: false, models: [], error: 'Redirects are disallowed for security.' };
-  }
-
-  if (!response.ok) {
+    return { ok: true, models: mappedModels, count: mappedModels.length };
+  } catch (err: any) {
     return {
       ok: false,
       models: [],
-      error: `Unable to fetch models from provider (HTTP ${response.status}).`,
+      error: err?.name === 'AbortError'
+        ? 'Timed out while fetching models from provider.'
+        : (err?.message || 'Error fetching models.'),
     };
   }
-
-  const data = await response.json();
-  const rawList: any[] = Array.isArray(data?.data) ? data.data : Array.isArray(data) ? data : [];
-  let filteredList = rawList;
-
-  if (params.provider === 'openai') {
-    const nonChatKeywords = ['whisper', 'tts', 'embedding', 'moderation', 'dall-e', 'davinci', 'babbage', 'curie', 'realtime'];
-    filteredList = rawList.filter((m: any) => {
-      const id = (typeof m === 'string' ? m : m.id || '').toLowerCase();
-      return !nonChatKeywords.some((kw) => id.includes(kw));
-    });
-    const priorityOrder = ['gpt-4o', 'gpt-4o-mini', 'o1', 'o3-mini', 'o1-mini', 'chatgpt-4o-latest', 'gpt-4.5', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo'];
-    filteredList.sort((a: any, b: any) => {
-      const idA = (typeof a === 'string' ? a : a.id || '').toLowerCase();
-      const idB = (typeof b === 'string' ? b : b.id || '').toLowerCase();
-      const indexA = priorityOrder.findIndex((p) => idA.startsWith(p));
-      const indexB = priorityOrder.findIndex((p) => idB.startsWith(p));
-      if (indexA !== -1 && indexB !== -1) return indexA - indexB;
-      if (indexA !== -1) return -1;
-      if (indexB !== -1) return 1;
-      return idA.localeCompare(idB);
-    });
-  }
-
-  const badgeLabel = params.provider === 'openai' ? 'OpenAI' : params.provider === '9router' ? '9Router' : 'Custom';
-  const mappedModels = filteredList.map((m: any) => {
-    const id = typeof m === 'string' ? m : m.id || m.name;
-    return {
-      id,
-      name: id,
-      badge: badgeLabel,
-      description: m.description || `AI Model: ${id}`,
-      provider: params.provider,
-    };
-  });
-
-  return { ok: true, models: mappedModels, count: mappedModels.length };
 }
 
 // ==================== PUBLIC CONFIG & HEALTH ====================
@@ -710,12 +1151,13 @@ app.post('/api/providers', requireSession, (req: Request, res: Response) => {
       return res.status(400).json({ ok: false, error: endpointCheck.error });
     }
 
+    const cleanKey = sanitizeApiKey(typeof apiKey === 'string' ? apiKey : '');
     const created = dbManager.createProvider({
       name,
       type,
       baseUrl: urlCheck.normalized,
       apiEndpoint: endpointCheck.normalized,
-      apiKey: typeof apiKey === 'string' ? apiKey : '',
+      apiKey: cleanKey,
       isDefault: Boolean(isDefault),
     });
 
@@ -732,6 +1174,11 @@ app.post('/api/providers', requireSession, (req: Request, res: Response) => {
 
 app.put('/api/providers/:id', requireSession, (req: Request, res: Response) => {
   try {
+    const existing = dbManager.getProviderRow(String(req.params.id));
+    if (!existing) {
+      return res.status(404).json({ ok: false, error: 'Provider not found.' });
+    }
+
     const { name, type, baseUrl, apiEndpoint, apiKey, clearApiKey, isDefault } = req.body;
     let normalizedBaseUrl = baseUrl;
     if (baseUrl !== undefined) {
@@ -751,15 +1198,24 @@ app.put('/api/providers/:id', requireSession, (req: Request, res: Response) => {
       normalizedEndpoint = endpointCheck.normalized;
     }
 
-    const updated = dbManager.updateProvider(req.params.id, {
+    const cleanKey = typeof apiKey === 'string' ? sanitizeApiKey(apiKey) : undefined;
+    const shouldResetStatus = Boolean(
+      cleanKey ||
+        clearApiKey ||
+        (normalizedBaseUrl !== undefined && normalizedBaseUrl !== (existing.base_url || '')) ||
+        (normalizedEndpoint !== undefined && normalizedEndpoint !== (existing.api_endpoint || '')) ||
+        (type !== undefined && type !== existing.type)
+    );
+
+    const updated = dbManager.updateProvider(String(req.params.id), {
       name,
       type,
       baseUrl: normalizedBaseUrl,
       apiEndpoint: normalizedEndpoint,
-      apiKey,
+      apiKey: cleanKey || undefined,
       clearApiKey: Boolean(clearApiKey),
       isDefault,
-      status: apiKey ? 'unverified' : undefined,
+      status: shouldResetStatus ? 'unverified' : undefined,
     });
 
     if (!updated) {
@@ -778,7 +1234,7 @@ app.put('/api/providers/:id', requireSession, (req: Request, res: Response) => {
 });
 
 app.delete('/api/providers/:id', requireSession, (req: Request, res: Response) => {
-  const deleted = dbManager.deleteProvider(req.params.id);
+  const deleted = dbManager.deleteProvider(String(req.params.id));
   if (!deleted) {
     return res.status(404).json({ ok: false, error: 'Provider not found.' });
   }
@@ -787,18 +1243,21 @@ app.delete('/api/providers/:id', requireSession, (req: Request, res: Response) =
 
 app.post('/api/providers/:id/test', requireSession, verifyRateLimit, async (req: Request, res: Response) => {
   try {
-    const row = dbManager.getProviderRow(req.params.id);
+    const row = dbManager.getProviderRow(String(req.params.id));
     if (!row) {
       return res.status(404).json({ ok: false, error: 'Provider not found.' });
     }
 
-    const overrideKey = typeof req.body?.apiKey === 'string' && req.body.apiKey.trim() ? req.body.apiKey.trim() : '';
-    const activeKey = overrideKey || dbManager.getDecryptedProviderKey(row.id);
+    const overrideKey = typeof req.body?.apiKey === 'string' ? sanitizeApiKey(req.body.apiKey) : '';
+    const activeKey = overrideKey || sanitizeApiKey(dbManager.getDecryptedProviderKey(row.id));
 
+    const overrideType = req.body?.provider as ApiProviderType | undefined;
     const result = await testProviderCredentials({
-      provider: row.type,
+      provider: overrideType || row.type,
       apiKey: activeKey,
       baseUrl: req.body?.baseUrl !== undefined ? req.body.baseUrl : row.base_url,
+      apiEndpoint: req.body?.apiEndpoint !== undefined ? req.body.apiEndpoint : row.api_endpoint,
+      providerId: row.id,
     });
 
     const updated = dbManager.updateProvider(row.id, {
@@ -824,17 +1283,21 @@ app.post('/api/providers/:id/test', requireSession, verifyRateLimit, async (req:
 
 app.post('/api/verify-key', requireSession, verifyRateLimit, async (req: Request, res: Response) => {
   try {
-    const { apiKey, provider = 'openai', baseUrl = '', providerId } = req.body;
-    let keyToTest = typeof apiKey === 'string' ? apiKey.trim() : '';
-    let provType = provider as ApiProviderType;
-    let provUrl = baseUrl;
+    const { apiKey, provider, baseUrl, apiEndpoint, providerId } = req.body || {};
+    let keyToTest = typeof apiKey === 'string' ? sanitizeApiKey(apiKey) : '';
+    let provType = (provider || 'openai') as ApiProviderType;
+    let provUrl = typeof baseUrl === 'string' ? baseUrl : '';
+    let provEndpoint = typeof apiEndpoint === 'string' ? apiEndpoint : '';
 
-    if (!keyToTest && providerId) {
+    if (providerId) {
       const row = dbManager.getProviderRow(providerId);
       if (row) {
-        keyToTest = dbManager.getDecryptedProviderKey(row.id);
-        provType = row.type;
-        provUrl = provUrl || row.base_url;
+        if (!keyToTest) {
+          keyToTest = sanitizeApiKey(dbManager.getDecryptedProviderKey(row.id));
+        }
+        provType = (provider as ApiProviderType) || row.type;
+        provUrl = baseUrl !== undefined ? String(baseUrl) : row.base_url;
+        provEndpoint = apiEndpoint !== undefined ? String(apiEndpoint) : row.api_endpoint;
       }
     }
 
@@ -842,6 +1305,8 @@ app.post('/api/verify-key', requireSession, verifyRateLimit, async (req: Request
       provider: provType,
       apiKey: keyToTest,
       baseUrl: provUrl,
+      apiEndpoint: provEndpoint,
+      providerId,
     });
     res.json(result);
   } catch (error: any) {
@@ -865,16 +1330,18 @@ app.post('/api/verify-key', requireSession, verifyRateLimit, async (req: Request
 
 app.post('/api/models', requireSession, verifyRateLimit, async (req: Request, res: Response) => {
   try {
-    const { apiKey, provider = 'openai', baseUrl = '', providerId } = req.body;
-    let activeKey = typeof apiKey === 'string' ? apiKey.trim() : '';
+    const { apiKey, provider = 'openai', baseUrl = '', apiEndpoint = '', providerId } = req.body;
+    let activeKey = typeof apiKey === 'string' ? sanitizeApiKey(apiKey) : '';
     let provType = provider as ApiProviderType;
     let provUrl = baseUrl;
+    let provEndpoint = apiEndpoint;
 
     if (providerId) {
       const row = dbManager.getProviderRow(providerId);
       if (row) {
         provType = row.type;
         provUrl = provUrl || row.base_url;
+        provEndpoint = provEndpoint || row.api_endpoint;
         if (!activeKey) {
           activeKey = dbManager.getDecryptedProviderKey(row.id);
         }
@@ -884,6 +1351,7 @@ app.post('/api/models', requireSession, verifyRateLimit, async (req: Request, re
       if (def) {
         provType = def.type;
         provUrl = def.base_url;
+        provEndpoint = def.api_endpoint;
         activeKey = dbManager.getDecryptedProviderKey(def.id);
       }
     }
@@ -893,6 +1361,7 @@ app.post('/api/models', requireSession, verifyRateLimit, async (req: Request, re
       provider: provType,
       apiKey: activeKey,
       baseUrl: provUrl,
+      apiEndpoint: provEndpoint,
     });
 
     const combined: Array<Record<string, any>> = [...(fetched.models || [])];
@@ -955,7 +1424,7 @@ app.post('/api/custom-models', requireSession, (req: Request, res: Response) => 
 });
 
 app.delete('/api/custom-models/:id', requireSession, (req: Request, res: Response) => {
-  const deleted = dbManager.deleteCustomModel(req.params.id);
+  const deleted = dbManager.deleteCustomModel(String(req.params.id));
   if (!deleted) {
     return res.status(404).json({ ok: false, error: 'Custom model not found.' });
   }
@@ -1149,7 +1618,7 @@ app.post('/api/conversations', requireSession, (req: Request, res: Response) => 
 
 app.get('/api/conversations/:id', requireSession, (req: Request, res: Response) => {
   try {
-    const result = dbManager.getConversation(req.params.id);
+    const result = dbManager.getConversation(String(req.params.id));
     if (!result) {
       return res.status(404).json({ ok: false, error: 'Conversation not found' });
     }
@@ -1162,7 +1631,7 @@ app.get('/api/conversations/:id', requireSession, (req: Request, res: Response) 
 app.put('/api/conversations/:id', requireSession, (req: Request, res: Response) => {
   try {
     const { title, model, provider, system_instruction } = req.body;
-    const updated = dbManager.updateConversation(req.params.id, {
+    const updated = dbManager.updateConversation(String(req.params.id), {
       title,
       model,
       provider,
@@ -1179,7 +1648,7 @@ app.put('/api/conversations/:id', requireSession, (req: Request, res: Response) 
 
 app.delete('/api/conversations/:id', requireSession, (req: Request, res: Response) => {
   try {
-    const success = dbManager.deleteConversation(req.params.id);
+    const success = dbManager.deleteConversation(String(req.params.id));
     res.json({ ok: success });
   } catch (err: any) {
     res.status(500).json({ ok: false, error: err.message });
@@ -1191,7 +1660,7 @@ app.post('/api/conversations/:id/messages', requireSession, (req: Request, res: 
     const { id, role, sender, content, metadata } = req.body;
     const saved = dbManager.saveMessage({
       id: id || 'msg-' + Date.now(),
-      conversation_id: req.params.id,
+      conversation_id: String(req.params.id),
       role: role || 'user',
       sender: sender || 'user',
       content: content || '',
@@ -1312,11 +1781,23 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
     requestId,
   } = req.body;
 
+  const reqTag = requestId || `req-${Date.now()}`;
+
+  if (!Array.isArray(messages) || messages.length === 0) {
+    console.warn(`[ChatStream] Rejected ${reqTag}: empty messages array`);
+    return res.status(400).json({
+      ok: false,
+      errorCode: 'INVALID_REQUEST',
+      error: 'Messages array is required.',
+    });
+  }
+
   // 1. Authoritative server-side license & quota verification BEFORE calling AI provider
   const license = await licenseService.getEffectiveLicenseState(false);
   const reservation = quotaService.reserveRequest(license);
 
   if (!reservation.allowed) {
+    console.warn(`[ChatStream] Rejected ${reqTag}: quota exceeded (${reservation.reason}, plan=${license.plan})`);
     return res.status(429).json({
       ok: false,
       errorCode: 'QUOTA_EXCEEDED',
@@ -1335,12 +1816,23 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
     ? dbManager.getProviderRow(providerId)
     : dbManager.getDefaultProviderRow();
 
+  if (providerId && !providerRow) {
+    quotaService.refundFailedRequest(reservation.dateKey, license.plan);
+    console.warn(`[ChatStream] Rejected ${reqTag}: providerId=${providerId} not found`);
+    return res.status(404).json({
+      ok: false,
+      errorCode: 'PROVIDER_NOT_FOUND',
+      error: 'Selected AI provider was not found.',
+    });
+  }
+
   const provider: ApiProviderType = providerRow?.type || (bodyProvider as ApiProviderType) || 'openai';
   let activeKey = '';
   try {
-    activeKey = providerRow ? dbManager.getDecryptedProviderKey(providerRow.id) : '';
+    activeKey = providerRow ? sanitizeApiKey(dbManager.getDecryptedProviderKey(providerRow.id)) : '';
   } catch (decryptErr: any) {
     quotaService.refundFailedRequest(reservation.dateKey, license.plan);
+    console.error(`[ChatStream] Rejected ${reqTag}: failed decrypting provider key (${decryptErr?.code || 'ERR'})`);
     const keyErr = classifyMasterKeyError(decryptErr);
     return res.status(503).json({
       ok: false,
@@ -1353,18 +1845,20 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
   const customEndpointCheck = validateCustomEndpointPath(providerRow?.api_endpoint || '');
   if (!customEndpointCheck.valid) {
     quotaService.refundFailedRequest(reservation.dateKey, license.plan);
+    console.warn(`[ChatStream] Rejected ${reqTag}: invalid custom endpoint path`);
     return res.status(400).json({ ok: false, errorCode: 'INVALID_URL', error: customEndpointCheck.error });
   }
   const customEndpointPath = customEndpointCheck.normalized;
 
   // Fallback to server environment GEMINI_API_KEY only when using Google and no stored provider key exists
   if (!activeKey && provider === 'google' && process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY') {
-    activeKey = process.env.GEMINI_API_KEY.trim();
+    activeKey = sanitizeApiKey(process.env.GEMINI_API_KEY);
   }
 
   const urlCheck = validateExternalProviderUrl(activeBaseUrl);
   if (!urlCheck.valid) {
     quotaService.refundFailedRequest(reservation.dateKey, license.plan);
+    console.warn(`[ChatStream] Rejected ${reqTag}: invalid provider base URL`);
     return res.status(400).json({ ok: false, errorCode: 'INVALID_URL', error: urlCheck.error });
   }
   activeBaseUrl = urlCheck.normalized;
@@ -1374,8 +1868,28 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders?.();
 
+  const streamAbortController = new AbortController();
+  let clientDisconnected = false;
+  res.on('close', () => {
+    if (!res.writableFinished) {
+      clientDisconnected = true;
+      streamAbortController.abort(new Error('Client disconnected'));
+    }
+  });
+  const safeWriteSse = (chunk: string) => {
+    if (!clientDisconnected && !res.writableEnded && !res.destroyed) {
+      res.write(chunk);
+    }
+  };
+  const safeEndSse = () => {
+    if (!res.writableEnded && !res.destroyed) {
+      res.end();
+    }
+  };
+
   if (!activeKey) {
     quotaService.refundFailedRequest(reservation.dateKey, license.plan);
+    console.warn(`[ChatStream] Rejected ${reqTag}: missing API key for provider=${provider}`);
     res.write(
       `data: ${JSON.stringify({
         error: 'No API Key configured. Please add an API Key in Settings -> Providers.',
@@ -1387,29 +1901,41 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
     return res.end();
   }
 
+  const providerCustomModels = providerRow ? dbManager.listCustomModels(providerRow.id) : [];
   const rawModel =
-    model ||
+    (typeof model === 'string' && model.trim()) ||
+    providerCustomModels[0]?.model_id ||
     dbManager.getUserSetting('default_model') ||
-    (provider === 'google' ? 'gemini-3.8-flash' : provider === 'claude' ? 'claude-3-5-sonnet-20241022' : 'gpt-4o-mini');
-  let targetModel = String(rawModel).replace(/^models\//, '').trim();
-
-  if (provider === 'google') {
-    const deprecated = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-2.0-flash', 'gemini-2.0-pro', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-1.0-pro'];
-    if (deprecated.includes(targetModel.toLowerCase())) {
-      targetModel = 'gemini-3.8-flash';
-    }
-  }
+    (provider === 'google' ? 'gemini-2.5-flash' : provider === 'claude' ? 'claude-sonnet-4-20250514' : 'gpt-4o-mini');
+  const targetModel = String(rawModel).replace(/^models\//, '').trim();
+  const parsedTemp = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.7;
 
   const activeConvId = conversationId || 'chat-' + Date.now();
   const lastUserMsg = messages.filter((m: any) => m.role === 'user' || m.sender === 'user').slice(-1)[0];
   const userText = lastUserMsg?.content || '';
+  const computedTitle = userText ? userText.slice(0, 32) + (userText.length > 32 ? '...' : '') : 'New chat';
+
+  console.log(
+    `[ChatStream] Dispatching ${reqTag} provider=${provider} (${providerRow?.name || 'default'}) model=${targetModel} conv=${activeConvId} msgs=${messages.length}`
+  );
 
   try {
     const existingConv = dbManager.getConversation(activeConvId);
     if (!existingConv) {
       dbManager.createConversation({
         id: activeConvId,
-        title: userText ? (userText.slice(0, 32) + (userText.length > 32 ? '...' : '')) : 'New chat',
+        title: computedTitle,
+        model: targetModel,
+        provider,
+        system_instruction: systemInstruction,
+      });
+    } else if (
+      userText &&
+      existingConv.messages.length === 0 &&
+      (existingConv.conversation.title === 'New chat' || existingConv.conversation.title === 'Đoạn chat mới')
+    ) {
+      dbManager.updateConversation(activeConvId, {
+        title: computedTitle,
         model: targetModel,
         provider,
         system_instruction: systemInstruction,
@@ -1443,6 +1969,7 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
   const finalizeAndSave = (status: 'success' | 'error' | 'aborted' = 'success') => {
     if (status === 'error' && !fullAiText.trim()) {
       quotaService.refundFailedRequest(reservation.dateKey, license.plan);
+      console.log(`[ChatStream] Finalized ${reqTag} status=error (refunded quota)`);
       return;
     }
 
@@ -1484,7 +2011,7 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
         cached_input_tokens: cachedTokens,
         reasoning_tokens: reasoningTokens,
         usage_source: usageSource,
-        request_id: requestId || activeConvId + '-' + Date.now(),
+        request_id: reqTag,
         status,
       });
 
@@ -1493,8 +2020,12 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
       console.error('[Stream] Error saving to SQLite:', saveErr);
     }
 
+    console.log(
+      `[ChatStream] Completed ${reqTag} status=${status} chars=${fullAiText.length} tokens=${totalTokens} source=${usageSource}`
+    );
+
     const updatedQuota = quotaService.getQuotaStatus(license);
-    res.write(
+    safeWriteSse(
       `data: ${JSON.stringify({
         usage: {
           inputTokens,
@@ -1514,7 +2045,8 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
   // 1. Google AI Studio Provider
   if (provider === 'google') {
     try {
-      const ai = getGoogleAIClient(activeKey);
+      console.log(`[ChatStream] Upstream Google generateContentStream base=${safeUrlForLog(resolveGoogleBaseUrl(activeBaseUrl))} model=${targetModel}`);
+      const ai = getGoogleAIClient(activeKey, activeBaseUrl);
       const formattedContents = messages.map((msg: any) => {
         const isModel = msg.role === 'model' || msg.role === 'assistant' || msg.sender === 'ai';
         return {
@@ -1524,7 +2056,7 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
       });
 
       const config: any = {
-        temperature: Number(temperature) || 0.7,
+        temperature: parsedTemp,
       };
       if (systemInstruction && systemInstruction.trim().length > 0) {
         config.systemInstruction = systemInstruction.trim();
@@ -1537,10 +2069,11 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
       });
 
       for await (const chunk of responseStream) {
+        if (clientDisconnected) break;
         const chunkText = chunk.text;
         if (chunkText) {
           fullAiText += chunkText;
-          res.write(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
+          safeWriteSse(`data: ${JSON.stringify({ text: chunkText })}\n\n`);
         }
 
         if (chunk.usageMetadata) {
@@ -1552,29 +2085,46 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
         }
       }
 
+      if (clientDisconnected) {
+        finalizeAndSave(fullAiText.trim() ? 'aborted' : 'error');
+        return safeEndSse();
+      }
+
+      if (!fullAiText.trim()) {
+        const emptyErr: any = new Error('Google AI returned an empty response.');
+        emptyErr.code = 'EMPTY_PROVIDER_RESPONSE';
+        throw emptyErr;
+      }
+
       finalizeAndSave('success');
-      res.write('data: [DONE]\n\n');
-      return res.end();
+      safeWriteSse('data: [DONE]\n\n');
+      return safeEndSse();
     } catch (error: any) {
+      if (clientDisconnected) {
+        finalizeAndSave(fullAiText.trim() ? 'aborted' : 'error');
+        return safeEndSse();
+      }
+      console.error(`[ChatStream] Upstream Google error (${reqTag}): ${error?.message || 'Unknown error'}`);
       finalizeAndSave('error');
       const { isApiKeyError, errorCode, friendlyMessage } = classifyError(error);
-      res.write(
+      safeWriteSse(
         `data: ${JSON.stringify({
           error: friendlyMessage,
-          errorCode,
+          errorCode: error?.code === 'EMPTY_PROVIDER_RESPONSE' ? 'EMPTY_PROVIDER_RESPONSE' : errorCode,
           errorType: isApiKeyError ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
         })}\n\n`
       );
-      res.write('data: [DONE]\n\n');
-      return res.end();
+      safeWriteSse('data: [DONE]\n\n');
+      return safeEndSse();
     }
   }
 
   // 2. Anthropic Claude Provider
   if (provider === 'claude') {
     try {
-      const cleanBase = getTargetBaseUrl('claude', activeBaseUrl);
-      const endpointPath = customEndpointPath ? (customEndpointPath.startsWith('/') ? customEndpointPath : `/${customEndpointPath}`) : '/messages';
+      const { chatUrl } = resolveProviderUrlAndEndpoint('claude', activeBaseUrl, customEndpointPath, '/messages');
+      console.log(`[ChatStream] Upstream POST ${safeUrlForLog(chatUrl)} model=${targetModel}`);
+
       const formattedClaudeMessages = messages.map((msg: any) => {
         const isAI = msg.role === 'model' || msg.role === 'assistant' || msg.sender === 'ai';
         return {
@@ -1583,57 +2133,70 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
         };
       });
 
-      const response = await fetch(`${cleanBase}${endpointPath}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': activeKey,
-          'anthropic-version': '2023-06-01',
+      const response = await fetchWithSafeRedirects(
+        chatUrl,
+        {
+          method: 'POST',
+          signal: streamAbortController.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': activeKey,
+            'anthropic-version': '2023-06-01',
+          },
+          body: JSON.stringify({
+            model: targetModel,
+            max_tokens: 4096,
+            system: systemInstruction && systemInstruction.trim().length > 0 ? systemInstruction.trim() : undefined,
+            messages: formattedClaudeMessages,
+            temperature: parsedTemp,
+            stream: true,
+          }),
         },
-        body: JSON.stringify({
-          model: targetModel,
-          max_tokens: 4096,
-          system: systemInstruction && systemInstruction.trim().length > 0 ? systemInstruction.trim() : undefined,
-          messages: formattedClaudeMessages,
-          temperature: Number(temperature) || 0.7,
-          stream: true,
-        }),
-        redirect: 'manual',
-      });
+        60000
+      );
 
-      if (response.status >= 300 && response.status < 400) {
-        finalizeAndSave('error');
-        res.write(
-          `data: ${JSON.stringify({
-            error: 'Provider attempted an HTTP redirect, which is disallowed for security.',
-            errorCode: 'PROVIDER_CONNECTION_ERROR',
-            errorType: 'GENERAL_ERROR',
-          })}\n\n`
-        );
-        res.write('data: [DONE]\n\n');
-        return res.end();
-      }
+      console.log(`[ChatStream] Upstream Claude response (${reqTag}): status=${response.status} content-type=${response.headers.get('content-type') || 'unknown'}`);
 
       if (!response.ok) {
         finalizeAndSave('error');
         const errorText = await response.text();
-        let parsedError = errorText;
-        try {
-          const parsed = JSON.parse(errorText);
-          parsedError = parsed.error?.message || parsed.message || errorText;
-        } catch {
-          // ignore
-        }
+        const parsedError = parseProviderErrorBody(errorText);
+        console.warn(`[ChatStream] Upstream Claude HTTP ${response.status} (${reqTag}): ${parsedError.slice(0, 160)}`);
         const { isApiKeyError, errorCode, friendlyMessage } = classifyError({ message: parsedError, status: response.status });
-        res.write(
+        safeWriteSse(
           `data: ${JSON.stringify({
             error: friendlyMessage || parsedError,
             errorCode,
             errorType: isApiKeyError ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
           })}\n\n`
         );
-        res.write('data: [DONE]\n\n');
-        return res.end();
+        safeWriteSse('data: [DONE]\n\n');
+        return safeEndSse();
+      }
+
+      const contentType = (response.headers.get('content-type') || '').toLowerCase();
+      if (contentType.includes('application/json')) {
+        const jsonBody = await response.json();
+        const text =
+          Array.isArray(jsonBody?.content)
+            ? jsonBody.content.map((c: any) => c?.text || '').join('')
+            : jsonBody?.choices?.[0]?.message?.content || '';
+        if (jsonBody?.usage) {
+          inputTokens = jsonBody.usage.input_tokens || jsonBody.usage.prompt_tokens || 0;
+          outputTokens = jsonBody.usage.output_tokens || jsonBody.usage.completion_tokens || 0;
+          totalTokens = inputTokens + outputTokens;
+          if (totalTokens > 0) usageSource = 'provider';
+        }
+        if (!String(text).trim()) {
+          const emptyErr: any = new Error('Anthropic Claude returned an empty response.');
+          emptyErr.code = 'EMPTY_PROVIDER_RESPONSE';
+          throw emptyErr;
+        }
+        fullAiText = String(text);
+        safeWriteSse(`data: ${JSON.stringify({ text: fullAiText })}\n\n`);
+        finalizeAndSave('success');
+        safeWriteSse('data: [DONE]\n\n');
+        return safeEndSse();
       }
 
       if (!response.body) {
@@ -1644,7 +2207,34 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
       const decoder = new TextDecoder('utf-8');
       let buffer = '';
 
-      while (true) {
+      const processClaudeLine = (rawLine: string): boolean => {
+        const trimmed = rawLine.trim();
+        if (!trimmed.startsWith('data:')) return false;
+        const dataStr = trimmed.slice(5).trim();
+        if (dataStr === '[DONE]') return true;
+        if (!dataStr) return false;
+        const parsed = JSON.parse(dataStr);
+        if (parsed.type === 'error' || parsed.error) {
+          const errMsg = parsed.error?.message || parsed.message || 'Upstream Claude stream error.';
+          throw new Error(errMsg);
+        }
+        if (parsed.type === 'message_start' && parsed.message?.usage) {
+          inputTokens = parsed.message.usage.input_tokens || 0;
+        }
+        if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
+          fullAiText += parsed.delta.text;
+          safeWriteSse(`data: ${JSON.stringify({ text: parsed.delta.text })}\n\n`);
+        }
+        if (parsed.type === 'message_delta' && parsed.usage) {
+          outputTokens = parsed.usage.output_tokens || 0;
+          totalTokens = inputTokens + outputTokens;
+          usageSource = 'provider';
+        }
+        return false;
+      };
+
+      let streamDone = false;
+      while (!streamDone && !clientDisconnected) {
         const { value, done } = await reader.read();
         if (done) break;
 
@@ -1653,46 +2243,58 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
         buffer = lines.pop() || '';
 
         for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed.startsWith('data: ')) {
-            const dataStr = trimmed.slice(6);
-            if (dataStr === '[DONE]') break;
-            try {
-              const parsed = JSON.parse(dataStr);
-              if (parsed.type === 'message_start' && parsed.message?.usage) {
-                inputTokens = parsed.message.usage.input_tokens || 0;
-              }
-              if (parsed.type === 'content_block_delta' && parsed.delta?.text) {
-                fullAiText += parsed.delta.text;
-                res.write(`data: ${JSON.stringify({ text: parsed.delta.text })}\n\n`);
-              }
-              if (parsed.type === 'message_delta' && parsed.usage) {
-                outputTokens = parsed.usage.output_tokens || 0;
-                totalTokens = inputTokens + outputTokens;
-                usageSource = 'provider';
-              }
-            } catch {
-              // ignore single chunk parse error
+          try {
+            if (processClaudeLine(line)) {
+              streamDone = true;
+              break;
             }
+          } catch (lineErr: any) {
+            if (lineErr instanceof SyntaxError) continue;
+            throw lineErr;
           }
         }
       }
 
+      if (clientDisconnected) {
+        await reader.cancel().catch(() => {});
+        finalizeAndSave(fullAiText.trim() ? 'aborted' : 'error');
+        return safeEndSse();
+      }
+
+      if (buffer.trim()) {
+        try {
+          processClaudeLine(buffer);
+        } catch (lineErr: any) {
+          if (!(lineErr instanceof SyntaxError)) throw lineErr;
+        }
+      }
+
+      if (!fullAiText.trim()) {
+        const emptyErr: any = new Error('Anthropic Claude returned an empty response stream.');
+        emptyErr.code = 'EMPTY_PROVIDER_RESPONSE';
+        throw emptyErr;
+      }
+
       finalizeAndSave('success');
-      res.write('data: [DONE]\n\n');
-      return res.end();
+      safeWriteSse('data: [DONE]\n\n');
+      return safeEndSse();
     } catch (error: any) {
+      if (clientDisconnected) {
+        finalizeAndSave(fullAiText.trim() ? 'aborted' : 'error');
+        return safeEndSse();
+      }
+      console.error(`[ChatStream] Upstream Claude error (${reqTag}): ${error?.message || 'Unknown error'}`);
       finalizeAndSave('error');
       const { isApiKeyError, errorCode, friendlyMessage } = classifyError(error);
-      res.write(
+      safeWriteSse(
         `data: ${JSON.stringify({
           error: friendlyMessage,
-          errorCode,
+          errorCode: error?.code === 'EMPTY_PROVIDER_RESPONSE' ? 'EMPTY_PROVIDER_RESPONSE' : errorCode,
           errorType: isApiKeyError ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
         })}\n\n`
       );
-      res.write('data: [DONE]\n\n');
-      return res.end();
+      safeWriteSse('data: [DONE]\n\n');
+      return safeEndSse();
     }
   }
 
@@ -1714,62 +2316,127 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
       });
     }
 
-    const cleanBase =
-      getTargetBaseUrl(provider, activeBaseUrl) ||
-      (provider === '9router' ? DEFAULT_9ROUTER_BASE_URL : DEFAULT_OPENAI_BASE_URL);
-    const endpointPath = customEndpointPath
-      ? (customEndpointPath.startsWith('/') ? customEndpointPath : `/${customEndpointPath}`)
-      : '/chat/completions';
+    const { chatUrl } = resolveProviderUrlAndEndpoint(
+      provider,
+      activeBaseUrl,
+      customEndpointPath,
+      '/chat/completions'
+    );
 
-    const response = await fetch(`${cleanBase}${endpointPath}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${activeKey}`,
-      },
-      body: JSON.stringify({
+    console.log(`[ChatStream] Upstream POST ${safeUrlForLog(chatUrl)} model=${targetModel}`);
+
+    const isReasoningModel = /^(o1|o3|o4)(-|$)/i.test(targetModel);
+    const buildPayload = (includeStreamOptions: boolean, includeTemperature: boolean) => {
+      const bodyObj: Record<string, any> = {
         model: targetModel,
         messages: formattedMessages,
-        temperature: Number(temperature) || 0.7,
         stream: true,
-        stream_options: { include_usage: true },
-      }),
-      redirect: 'manual',
-    });
+      };
+      if (includeTemperature && !isReasoningModel) {
+        bodyObj.temperature = parsedTemp;
+      }
+      if (includeStreamOptions) {
+        bodyObj.stream_options = { include_usage: true };
+      }
+      return JSON.stringify(bodyObj);
+    };
 
-    if (response.status >= 300 && response.status < 400) {
-      finalizeAndSave('error');
-      res.write(
-        `data: ${JSON.stringify({
-          error: 'Provider attempted an HTTP redirect, which is disallowed for security.',
-          errorCode: 'PROVIDER_CONNECTION_ERROR',
-          errorType: 'GENERAL_ERROR',
-        })}\n\n`
+    const callOpenAiStream = (includeStreamOptions: boolean, includeTemperature: boolean) =>
+      fetchWithSafeRedirects(
+        chatUrl,
+        {
+          method: 'POST',
+          signal: streamAbortController.signal,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${activeKey}`,
+          },
+          body: buildPayload(includeStreamOptions, includeTemperature),
+        },
+        60000
       );
-      res.write('data: [DONE]\n\n');
-      return res.end();
+
+    let response = await callOpenAiStream(true, !isReasoningModel);
+    console.log(`[ChatStream] Upstream OpenAI-compatible response (${reqTag}): status=${response.status} content-type=${response.headers.get('content-type') || 'unknown'}`);
+
+    if (response.status === 400 || response.status === 422) {
+      const firstErrText = await response.text();
+      const firstErrMsg = parseProviderErrorBody(firstErrText);
+      const lower = firstErrMsg.toLowerCase();
+      const shouldRetryWithoutOpts =
+        lower.includes('stream_options') ||
+        lower.includes('temperature') ||
+        lower.includes('unsupported') ||
+        lower.includes('unknown') ||
+        lower.includes('unrecognized') ||
+        lower.includes('extra_forbidden');
+
+      if (shouldRetryWithoutOpts) {
+        console.log(`[ChatStream] Retrying ${reqTag} without stream_options/temperature`);
+        response = await callOpenAiStream(false, !lower.includes('temperature') && !isReasoningModel);
+        console.log(`[ChatStream] Upstream OpenAI-compatible retry response (${reqTag}): status=${response.status} content-type=${response.headers.get('content-type') || 'unknown'}`);
+      } else {
+        finalizeAndSave('error');
+        console.warn(`[ChatStream] Upstream HTTP ${response.status} (${reqTag}): ${firstErrMsg.slice(0, 160)}`);
+        const { isApiKeyError, errorCode, friendlyMessage } = classifyError({ message: firstErrMsg, status: response.status });
+        safeWriteSse(
+          `data: ${JSON.stringify({
+            error: friendlyMessage || firstErrMsg,
+            errorCode,
+            errorType: isApiKeyError ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
+          })}\n\n`
+        );
+        safeWriteSse('data: [DONE]\n\n');
+        return safeEndSse();
+      }
     }
 
     if (!response.ok) {
       finalizeAndSave('error');
       const errorText = await response.text();
-      let parsedError = errorText;
-      try {
-        const parsed = JSON.parse(errorText);
-        parsedError = parsed.error?.message || parsed.message || errorText;
-      } catch {
-        // ignore
-      }
+      const parsedError = parseProviderErrorBody(errorText);
+      console.warn(`[ChatStream] Upstream HTTP ${response.status} (${reqTag}): ${parsedError.slice(0, 160)}`);
       const { isApiKeyError, errorCode, friendlyMessage } = classifyError({ message: parsedError, status: response.status });
-      res.write(
+      safeWriteSse(
         `data: ${JSON.stringify({
           error: friendlyMessage || parsedError,
           errorCode,
           errorType: isApiKeyError ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
         })}\n\n`
       );
-      res.write('data: [DONE]\n\n');
-      return res.end();
+      safeWriteSse('data: [DONE]\n\n');
+      return safeEndSse();
+    }
+
+    const contentType = (response.headers.get('content-type') || '').toLowerCase();
+    if (contentType.includes('application/json')) {
+      const jsonBody = await response.json();
+      if (jsonBody?.error) {
+        throw new Error(jsonBody.error?.message || jsonBody.message || 'Provider returned an error.');
+      }
+      const text =
+        jsonBody?.choices?.[0]?.message?.content ??
+        jsonBody?.choices?.[0]?.text ??
+        jsonBody?.output_text ??
+        '';
+      if (jsonBody?.usage) {
+        inputTokens = jsonBody.usage.prompt_tokens || 0;
+        outputTokens = jsonBody.usage.completion_tokens || 0;
+        totalTokens = jsonBody.usage.total_tokens || inputTokens + outputTokens;
+        cachedTokens = jsonBody.usage.prompt_tokens_details?.cached_tokens || 0;
+        reasoningTokens = jsonBody.usage.completion_tokens_details?.reasoning_tokens || 0;
+        if (totalTokens > 0) usageSource = 'provider';
+      }
+      if (!String(text).trim()) {
+        const emptyErr: any = new Error('AI provider returned an empty response.');
+        emptyErr.code = 'EMPTY_PROVIDER_RESPONSE';
+        throw emptyErr;
+      }
+      fullAiText = String(text);
+      safeWriteSse(`data: ${JSON.stringify({ text: fullAiText })}\n\n`);
+      finalizeAndSave('success');
+      safeWriteSse('data: [DONE]\n\n');
+      return safeEndSse();
     }
 
     if (!response.body) {
@@ -1780,7 +2447,39 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
 
-    while (true) {
+    const processOpenAiLine = (rawLine: string): boolean => {
+      const trimmed = rawLine.trim();
+      if (!trimmed.startsWith('data:')) return false;
+      const dataStr = trimmed.slice(5).trim();
+      if (dataStr === '[DONE]') return true;
+      if (!dataStr) return false;
+
+      const parsed = JSON.parse(dataStr);
+      if (parsed.error) {
+        throw new Error(parsed.error?.message || parsed.message || 'Upstream provider stream error.');
+      }
+      if (parsed.usage) {
+        inputTokens = parsed.usage.prompt_tokens || 0;
+        outputTokens = parsed.usage.completion_tokens || 0;
+        totalTokens = parsed.usage.total_tokens || inputTokens + outputTokens;
+        cachedTokens = parsed.usage.prompt_tokens_details?.cached_tokens || 0;
+        reasoningTokens = parsed.usage.completion_tokens_details?.reasoning_tokens || 0;
+        usageSource = 'provider';
+      }
+
+      const textChunk =
+        parsed.choices?.[0]?.delta?.content ??
+        parsed.choices?.[0]?.message?.content ??
+        '';
+      if (textChunk) {
+        fullAiText += textChunk;
+        safeWriteSse(`data: ${JSON.stringify({ text: textChunk })}\n\n`);
+      }
+      return false;
+    };
+
+    let streamDone = false;
+    while (!streamDone && !clientDisconnected) {
       const { value, done } = await reader.read();
       if (done) break;
 
@@ -1789,48 +2488,58 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed.startsWith('data: ')) {
-          const dataStr = trimmed.slice(6);
-          if (dataStr === '[DONE]') break;
-          try {
-            const parsed = JSON.parse(dataStr);
-            if (parsed.usage) {
-              inputTokens = parsed.usage.prompt_tokens || 0;
-              outputTokens = parsed.usage.completion_tokens || 0;
-              totalTokens = parsed.usage.total_tokens || inputTokens + outputTokens;
-              cachedTokens = parsed.usage.prompt_tokens_details?.cached_tokens || 0;
-              reasoningTokens = parsed.usage.completion_tokens_details?.reasoning_tokens || 0;
-              usageSource = 'provider';
-            }
-
-            const textChunk = parsed.choices?.[0]?.delta?.content || '';
-            if (textChunk) {
-              fullAiText += textChunk;
-              res.write(`data: ${JSON.stringify({ text: textChunk })}\n\n`);
-            }
-          } catch {
-            // ignore chunk error
+        try {
+          if (processOpenAiLine(line)) {
+            streamDone = true;
+            break;
           }
+        } catch (lineErr: any) {
+          if (lineErr instanceof SyntaxError) continue;
+          throw lineErr;
         }
       }
     }
 
+    if (clientDisconnected) {
+      await reader.cancel().catch(() => {});
+      finalizeAndSave(fullAiText.trim() ? 'aborted' : 'error');
+      return safeEndSse();
+    }
+
+    if (buffer.trim()) {
+      try {
+        processOpenAiLine(buffer);
+      } catch (lineErr: any) {
+        if (!(lineErr instanceof SyntaxError)) throw lineErr;
+      }
+    }
+
+    if (!fullAiText.trim()) {
+      const emptyErr: any = new Error('AI provider returned an empty response stream.');
+      emptyErr.code = 'EMPTY_PROVIDER_RESPONSE';
+      throw emptyErr;
+    }
+
     finalizeAndSave('success');
-    res.write('data: [DONE]\n\n');
-    return res.end();
+    safeWriteSse('data: [DONE]\n\n');
+    return safeEndSse();
   } catch (error: any) {
+    if (clientDisconnected) {
+      finalizeAndSave(fullAiText.trim() ? 'aborted' : 'error');
+      return safeEndSse();
+    }
+    console.error(`[ChatStream] Upstream error (${reqTag}): ${error?.message || 'Unknown error'}`);
     finalizeAndSave('error');
     const { isApiKeyError, errorCode, friendlyMessage } = classifyError(error);
-    res.write(
+    safeWriteSse(
       `data: ${JSON.stringify({
         error: friendlyMessage,
-        errorCode,
+        errorCode: error?.code === 'EMPTY_PROVIDER_RESPONSE' ? 'EMPTY_PROVIDER_RESPONSE' : errorCode,
         errorType: isApiKeyError ? 'INVALID_OR_EXPIRED_KEY' : 'GENERAL_ERROR',
       })}\n\n`
     );
-    res.write('data: [DONE]\n\n');
-    return res.end();
+    safeWriteSse('data: [DONE]\n\n');
+    return safeEndSse();
   }
 });
 

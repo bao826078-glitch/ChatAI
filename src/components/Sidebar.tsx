@@ -69,6 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
+  const [confirmClearAll, setConfirmClearAll] = useState(false);
 
   const normalizedQuery = searchQuery.toLowerCase().trim();
   const filteredConversations = conversations.filter((c) => {
@@ -338,17 +339,36 @@ export const Sidebar: React.FC<SidebarProps> = ({
           <div className="flex items-center justify-between text-[11px] text-neutral-500 dark:text-neutral-400 px-0.5">
             <span className="font-mono">SQLite</span>
             {conversations.length > 0 && (
-              <button
-                type="button"
-                onClick={() => {
-                  if (window.confirm(t.clearAllConfirm)) {
-                    onClearAllChats();
-                  }
-                }}
-                className="hover:text-red-500 transition-colors cursor-pointer"
-              >
-                {t.clearAllChats}
-              </button>
+              confirmClearAll ? (
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmClearAll(false);
+                      onClearAllChats();
+                    }}
+                    className="text-red-500 hover:text-red-600 font-semibold cursor-pointer"
+                  >
+                    {t.confirmBtn}
+                  </button>
+                  <span aria-hidden="true">·</span>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmClearAll(false)}
+                    className="hover:text-neutral-800 dark:hover:text-neutral-200 cursor-pointer"
+                  >
+                    {t.cancelBtn}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmClearAll(true)}
+                  className="hover:text-red-500 transition-colors cursor-pointer"
+                >
+                  {t.clearAllChats}
+                </button>
+              )
             )}
           </div>
         </div>

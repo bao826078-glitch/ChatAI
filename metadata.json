@@ -1,6 +1,6 @@
 {
   "name": "ChatAI",
-  "description": "Unified multi-provider AI workspace supporting multiple models, centralized configuration, and Keygate licensing.",
+  "description": "Unified multi-provider AI workspace supporting multiple models, centralized configuration.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

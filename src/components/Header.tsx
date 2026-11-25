@@ -7,7 +7,7 @@ import {
   BarChart3,
   Lock,
 } from 'lucide-react';
-import { AppLanguage, LicenseInfo, ModelOption, QuotaInfo } from '../types';
+import { AppLanguage, LicenseInfo, ModelOption, QuotaInfo, SettingsTab } from '../types';
 import { translations } from '../utils/i18n';
 
 interface HeaderProps {
@@ -16,7 +16,7 @@ interface HeaderProps {
   title: string;
   selectedModel: string;
   models: ModelOption[];
-  onOpenSettings: (tab?: 'providers' | 'models' | 'language' | 'general' | 'license') => void;
+  onOpenSettings: (tab?: SettingsTab) => void;
   onOpenAnalyticsModal: () => void;
   onClearCurrentChat: () => void;
   hasMessages: boolean;

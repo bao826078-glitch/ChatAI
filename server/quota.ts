@@ -37,17 +37,17 @@ export class QuotaService {
 
   public getLimitsForLicense(license: PublicLicenseInfo): { chatLimit: number; tokenLimit: number } {
     if (license.plan === 'community') {
-      const defaultCommunityChats = parseLimit(process.env.COMMUNITY_DAILY_CHAT_LIMIT, 1000);
-      const defaultCommunityTokens = parseLimit(process.env.COMMUNITY_DAILY_TOKEN_LIMIT, 2000000);
+      const defaultCommunityChats = parseLimit(process.env.COMMUNITY_DAILY_CHAT_LIMIT, 10000);
+      const defaultCommunityTokens = parseLimit(process.env.COMMUNITY_DAILY_TOKEN_LIMIT, 10000000);
       return {
-        chatLimit: license.entitlements.dailyChatLimit || defaultCommunityChats,
-        tokenLimit: license.entitlements.dailyTokenLimit || defaultCommunityTokens,
+        chatLimit: Math.max(defaultCommunityChats, license.entitlements.dailyChatLimit || 0),
+        tokenLimit: Math.max(defaultCommunityTokens, license.entitlements.dailyTokenLimit || 0),
       };
     }
 
     return {
-      chatLimit: parseLimit(process.env.FREE_DAILY_CHAT_LIMIT, 20),
-      tokenLimit: parseLimit(process.env.FREE_DAILY_TOKEN_LIMIT, 50000),
+      chatLimit: parseLimit(process.env.FREE_DAILY_CHAT_LIMIT, 2000),
+      tokenLimit: parseLimit(process.env.FREE_DAILY_TOKEN_LIMIT, 2000000),
     };
   }
 

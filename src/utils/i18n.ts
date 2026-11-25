@@ -10,6 +10,7 @@ export const translations = {
     saveBtn: 'Save',
     cancelBtn: 'Cancel',
     deleteBtn: 'Delete',
+    confirmBtn: 'Confirm',
     editBtn: 'Edit',
     addBtn: 'Add',
     loadingText: 'Loading...',
@@ -40,9 +41,10 @@ export const translations = {
     licenseActivatedSuccessTitle: 'Community Plan Activated',
     licenseActivatedSuccessDesc: 'Your license has been verified with Keygate. Enjoy full Community access.',
     licenseVerifiedSuccessDesc: 'License key is valid and active.',
+    licenseVerifiedReadyToActivate: 'License key is valid and ready. Click "Activate License" to enable the Community plan.',
     continueToAppBtn: 'Continue to ChatAI',
     keygateUnconfiguredNotice:
-      'Keygate license server URL (KEYGATE_BASE_URL) is not configured yet on the backend. You can still use ChatAI with the Free plan.',
+      'License verification service is currently unavailable. You can still use ChatAI with the Free plan.',
 
     // Header
     newChatTitle: 'New chat',
@@ -221,7 +223,6 @@ export const translations = {
     presetWriterPrompt: 'You are an experienced copywriter. Use polished, engaging, and professional language tailored to the context.',
     sendOnEnterLabel: 'Send message with Enter key',
     compactModeLabel: 'Compact message spacing',
-    reopenWelcomeBtn: 'Open Welcome & Activation Screen',
 
     // Settings -> License & Subscription (Free vs Community ONLY)
     licenseHeading: 'License & Subscription',
@@ -231,8 +232,6 @@ export const translations = {
     licenseKeyLabel: 'License Key',
     productNameLabel: 'Product Name',
     activationDateLabel: 'Activation Date',
-    expirationDateLabel: 'Expiration Date',
-    noExpirationLabel: 'No expiration',
     usageLimitLabel: 'Daily Usage Limit',
     usedQuotaLabel: 'Used Quota',
     remainingQuotaLabel: 'Remaining Quota',
@@ -360,10 +359,12 @@ export const translations = {
     errorCodes: {
       QUOTA_EXCEEDED: 'Daily Free/Community usage quota exceeded. Activate a Community license or wait for the daily reset.',
       FEATURE_LOCKED_FREE: 'This feature is restricted on the Free plan. Activate a valid Community license to unlock.',
-      KEYGATE_NOT_CONFIGURED: 'Keygate license server is not configured (KEYGATE_BASE_URL is empty on the server).',
-      KEYGATE_UNREACHABLE: 'Unable to reach Keygate license server. Please check network connectivity and KEYGATE_BASE_URL.',
+      KEYGATE_NOT_CONFIGURED: 'License verification service is currently unavailable.',
+      KEYGATE_UNREACHABLE: 'Unable to reach the license verification server. Please check network connectivity and try again.',
       KEYGATE_REDIRECT_BLOCKED: 'Keygate server attempted an unexpected redirect, which is blocked for security.',
       LICENSE_INVALID: 'The provided license key is invalid.',
+      LICENSE_NOT_ACTIVATED: 'License key is valid but not yet activated on this device. Click Activate License.',
+      LICENSE_ACTIVATION_LIMIT: 'This license key has reached its maximum device activation limit.',
       LICENSE_EXPIRED: 'This license key has expired. You have been switched to the Free plan.',
       LICENSE_REVOKED: 'This license key has been revoked. You have been switched to the Free plan.',
       LICENSE_PRODUCT_MISMATCH: 'This license key is not valid for this ChatAI product.',
@@ -371,6 +372,8 @@ export const translations = {
       RATE_LIMITED: 'Too many requests. Please wait a moment and try again.',
       API_KEY_INVALID: 'API key is invalid or expired. Check your provider settings.',
       MISSING_API_KEY: 'No API key configured for the active provider.',
+      PROVIDER_NOT_FOUND: 'Selected AI provider was not found. Please check Settings -> AI Providers.',
+      EMPTY_PROVIDER_RESPONSE: 'AI provider returned an empty response. Verify Base URL, Endpoint Path, and Model ID.',
       MASTER_KEY_MISSING: 'Master encryption key (master.key) is missing. Restore your key from backup in Settings -> Security & Keys.',
       MASTER_KEY_CORRUPTED: 'Master encryption key file is corrupted or unreadable. Restore your key from backup.',
       MASTER_KEY_MISMATCH: 'Master key fingerprint does not match encrypted database records. Restore the original backup.',
@@ -384,6 +387,7 @@ export const translations = {
     saveBtn: 'Lưu',
     cancelBtn: 'Hủy',
     deleteBtn: 'Xóa',
+    confirmBtn: 'Xác nhận',
     editBtn: 'Sửa',
     addBtn: 'Thêm',
     loadingText: 'Đang tải...',
@@ -414,9 +418,10 @@ export const translations = {
     licenseActivatedSuccessTitle: 'Đã kích hoạt gói Community',
     licenseActivatedSuccessDesc: 'Bản quyền đã được xác minh qua Keygate. Bạn đang sử dụng đầy đủ quyền lợi gói Community.',
     licenseVerifiedSuccessDesc: 'License Key hợp lệ và đang hoạt động.',
+    licenseVerifiedReadyToActivate: 'License Key hợp lệ và sẵn sàng sử dụng. Nhấn "Kích hoạt bản quyền" để bật gói Community.',
     continueToAppBtn: 'Vào ChatAI',
     keygateUnconfiguredNotice:
-      'Máy chủ bản quyền Keygate (KEYGATE_BASE_URL) chưa được cấu hình ở Backend. Bạn vẫn có thể sử dụng ChatAI với gói Free.',
+      'Dịch vụ xác minh bản quyền hiện không khả dụng. Bạn vẫn có thể sử dụng ChatAI với gói Free.',
 
     // Header
     newChatTitle: 'Đoạn chat mới',
@@ -595,7 +600,6 @@ export const translations = {
     presetWriterPrompt: 'Bạn là người biên soạn nội dung chuyên nghiệp. Sử dụng từ ngữ trang trọng, mạch lạc và phù hợp mục đích giao tiếp.',
     sendOnEnterLabel: 'Gửi tin nhắn bằng phím Enter',
     compactModeLabel: 'Chế độ hiển thị tin nhắn gọn',
-    reopenWelcomeBtn: 'Mở lại màn hình Chào mừng & Kích hoạt',
 
     // Settings -> License & Subscription
     licenseHeading: 'Bản quyền & Gói sử dụng',
@@ -605,8 +609,6 @@ export const translations = {
     licenseKeyLabel: 'License Key',
     productNameLabel: 'Tên sản phẩm',
     activationDateLabel: 'Ngày kích hoạt',
-    expirationDateLabel: 'Ngày hết hạn',
-    noExpirationLabel: 'Không thời hạn',
     usageLimitLabel: 'Hạn mức hàng ngày',
     usedQuotaLabel: 'Đã sử dụng',
     remainingQuotaLabel: 'Hạn mức còn lại',
@@ -734,10 +736,12 @@ export const translations = {
     errorCodes: {
       QUOTA_EXCEEDED: 'Đã hết hạn mức sử dụng hàng ngày. Vui lòng kích hoạt bản quyền Community hoặc chờ đặt lại hạn mức.',
       FEATURE_LOCKED_FREE: 'Tính năng này không khả dụng trên gói Free. Hãy kích hoạt bản quyền Community để mở khóa.',
-      KEYGATE_NOT_CONFIGURED: 'Máy chủ Keygate chưa được cấu hình (thiếu KEYGATE_BASE_URL trên Backend).',
-      KEYGATE_UNREACHABLE: 'Không thể kết nối đến máy chủ Keygate. Vui lòng kiểm tra kết nối mạng và KEYGATE_BASE_URL.',
+      KEYGATE_NOT_CONFIGURED: 'Dịch vụ xác minh bản quyền hiện không khả dụng.',
+      KEYGATE_UNREACHABLE: 'Không thể kết nối đến máy chủ xác minh bản quyền. Vui lòng kiểm tra kết nối mạng và thử lại.',
       KEYGATE_REDIRECT_BLOCKED: 'Máy chủ Keygate trả về chuyển hướng bất thường, đã bị chặn để đảm bảo an toàn.',
       LICENSE_INVALID: 'License Key không hợp lệ.',
+      LICENSE_NOT_ACTIVATED: 'License Key hợp lệ nhưng chưa kích hoạt trên thiết bị này. Hãy nhấn Kích hoạt bản quyền.',
+      LICENSE_ACTIVATION_LIMIT: 'License Key này đã đạt giới hạn thiết bị kích hoạt tối đa.',
       LICENSE_EXPIRED: 'License Key đã hết hạn. Hệ thống đã chuyển về gói Free.',
       LICENSE_REVOKED: 'License Key đã bị thu hồi. Hệ thống đã chuyển về gói Free.',
       LICENSE_PRODUCT_MISMATCH: 'License Key không thuộc sản phẩm ChatAI này.',
@@ -745,6 +749,8 @@ export const translations = {
       RATE_LIMITED: 'Bạn thao tác quá nhanh. Vui lòng chờ giây lát rồi thử lại.',
       API_KEY_INVALID: 'API Key không hợp lệ hoặc đã hết hạn. Vui lòng kiểm tra lại trong Cài đặt.',
       MISSING_API_KEY: 'Chưa cấu hình API Key cho nhà cung cấp đang chọn.',
+      PROVIDER_NOT_FOUND: 'Không tìm thấy nhà cung cấp AI đã chọn. Vui lòng kiểm tra Cài đặt -> Nhà cung cấp AI.',
+      EMPTY_PROVIDER_RESPONSE: 'Nhà cung cấp AI không trả về nội dung. Vui lòng kiểm tra lại Base URL, Đường dẫn Endpoint và Model ID.',
       MASTER_KEY_MISSING: 'Thiếu tệp khóa mã hóa chính (master.key). Vui lòng khôi phục từ bản sao lưu trong Cài đặt -> Bảo mật & Khóa.',
       MASTER_KEY_CORRUPTED: 'Tệp khóa mã hóa chính bị hỏng hoặc không đọc được. Vui lòng khôi phục từ bản sao lưu.',
       MASTER_KEY_MISMATCH: 'Khóa mã hóa không khớp với dữ liệu đã lưu trong cơ sở dữ liệu. Vui lòng khôi phục đúng bản sao lưu.',
@@ -780,6 +786,15 @@ export function translateErrorCode(
 ): string {
   const dict = translations[language] || translations.en;
   if (errorCode && dict.errorCodes[errorCode]) {
+    if (
+      errorCode === 'LICENSE_INVALID' &&
+      fallbackMsg &&
+      fallbackMsg.trim() &&
+      fallbackMsg.trim() !== 'License verification failed.' &&
+      fallbackMsg.trim() !== 'License activation failed.'
+    ) {
+      return `${dict.errorCodes[errorCode]} (${fallbackMsg.trim()})`;
+    }
     return dict.errorCodes[errorCode];
   }
   return fallbackMsg || dict.errorCodes.KEYGATE_UNREACHABLE;

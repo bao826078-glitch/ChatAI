@@ -57,6 +57,9 @@ export async function apiFetch(input: string, init: RequestInit = {}): Promise<R
     if (sessionToken) {
       retryHeaders.set('Authorization', `Bearer ${sessionToken}`);
     }
+    if (init.body && !retryHeaders.has('Content-Type') && typeof init.body === 'string') {
+      retryHeaders.set('Content-Type', 'application/json');
+    }
     response = await fetch(input, { ...init, headers: retryHeaders });
   }
 
