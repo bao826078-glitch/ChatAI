@@ -42,11 +42,10 @@ jobs:
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          no-cache: true
           push: true
           tags: |
             bao826078/chatai:latest
             bao826078/chatai:${{ github.sha }}
             ghcr.io/bao826078-glitch/chatai:latest
             ghcr.io/bao826078-glitch/chatai:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
