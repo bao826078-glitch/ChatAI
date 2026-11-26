@@ -95,16 +95,16 @@ jobs:
         run: |
           set -euo pipefail
 
-          docker buildx imagetools create \\
-            --tag bao826078/chatai:latest \\
-            --tag bao826078/chatai:"$IMAGE_TAG" \\
-            bao826078/chatai:"$IMAGE_TAG-amd64" \\
+          docker buildx imagetools create \
+            --tag bao826078/chatai:latest \
+            --tag bao826078/chatai:"$IMAGE_TAG" \
+            bao826078/chatai:"$IMAGE_TAG-amd64" \
             bao826078/chatai:"$IMAGE_TAG-arm64"
 
-          docker buildx imagetools create \\
-            --tag ghcr.io/bao826078-glitch/chatai:latest \\
-            --tag ghcr.io/bao826078-glitch/chatai:"$IMAGE_TAG" \\
-            ghcr.io/bao826078-glitch/chatai:"$IMAGE_TAG-amd64" \\
+          docker buildx imagetools create \
+            --tag ghcr.io/bao826078-glitch/chatai:latest \
+            --tag ghcr.io/bao826078-glitch/chatai:"$IMAGE_TAG" \
+            ghcr.io/bao826078-glitch/chatai:"$IMAGE_TAG-amd64" \
             ghcr.io/bao826078-glitch/chatai:"$IMAGE_TAG-arm64"
 
           docker buildx imagetools inspect bao826078/chatai:latest
