@@ -2546,7 +2546,7 @@ app.post('/api/chat/stream', requireSession, chatRateLimit, async (req: Request,
 // Serve frontend in production or mount Vite in development
 if (process.env.NODE_ENV === 'production') {
   app.use(express.static(path.resolve(__dirname, 'dist')));
-  app.get('*', (_req: Request, res: Response) => {
+  app.get('/{*splat}', (_req: Request, res: Response) => {
     res.sendFile(path.resolve(__dirname, 'dist', 'index.html'));
   });
 } else {
